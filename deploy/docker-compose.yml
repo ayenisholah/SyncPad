@@ -4,13 +4,10 @@
 
 services:
   syncpad:
-    # The VPS pulls this image from GHCR (published by CI). SYNCPAD_TAG selects
-    # the version to run — a semver on release, or `latest` from main. The
-    # build block stays for local/manual builds (`docker compose build`).
-    image: ghcr.io/ayenisholah/syncpad:${SYNCPAD_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    # The VPS pulls this image from GHCR (published by the Container Image
+    # workflow). SYNCPAD_IMAGE selects which tag to run and is set by the Deploy
+    # Production workflow; it falls back to `edge` (the latest main build).
+    image: ${SYNCPAD_IMAGE:-ghcr.io/ayenisholah/syncpad:edge}
     container_name: syncpad
     restart: unless-stopped
     # Give the SIGTERM snapshot flush time to finish before the kill.

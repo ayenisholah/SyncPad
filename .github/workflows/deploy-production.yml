@@ -1,0 +1,62 @@
+name: Deploy Production
+
+# One-click deploy: pick an image tag already published to GHCR by the Container
+# Image workflow and roll it out on the VPS. Uses the `production` environment's
+# secrets and reaches the host over SSH. Manual only — nothing deploys on push.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (e.g. edge, v0.1.0, sha-abc1234)"
+        required: true
+        default: edge
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+      SYNCPAD_IMAGE: ghcr.io/ayenisholah/syncpad:${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload deploy bundle
+        run: |
+          tar -czf deploy-bundle.tgz deploy
+          scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            deploy-bundle.tgz "$VPS_USER@$VPS_HOST:/tmp/syncpad-deploy-bundle.tgz"
+
+      - name: Deploy stack
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" "
+            set -eu
+            mkdir -p /opt/syncpad
+            tar -xzf /tmp/syncpad-deploy-bundle.tgz -C /opt/syncpad
+            export SYNCPAD_IMAGE='$SYNCPAD_IMAGE'
+            docker compose -f /opt/syncpad/deploy/docker-compose.yml pull
+            docker compose -f /opt/syncpad/deploy/docker-compose.yml up -d
+            docker compose -f /opt/syncpad/deploy/docker-compose.yml ps
+          "
+
+      - name: Smoke test
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            "curl -fsS -X POST http://127.0.0.1:8090/api/docs >/dev/null && echo 'smoke: create-doc OK'"

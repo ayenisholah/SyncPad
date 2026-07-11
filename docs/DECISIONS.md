@@ -78,21 +78,26 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
 - Context: the single-instance deployment (D-006) needs a repeatable way to build
   the image and roll the container without hand-building on the host. The source
   lives on GitHub, so its Actions and Container Registry are already available.
-- Decision: a GitHub Actions workflow builds the multi-stage image and pushes it
-  to the GitHub Container Registry (`ghcr.io/ayenisholah/syncpad`), authenticated
-  with the built-in job token (no personal access token). Build-and-push runs on
-  every push to `main`; deployment is gated to version tags (`v*`) and manual
-  dispatch, and connects to the VPS over SSH with a dedicated deploy key to run
-  `docker compose pull` + `up -d`. Images are tagged with the git short SHA,
-  `latest`, and the release version to allow rollback. The registry package is
-  public so the host pulls without a login. Compose selects the running version
-  through `SYNCPAD_TAG`.
-- Consequences: releases are a single tag push and roll back by re-deploying an
-  older tag. Deploy credentials live only in encrypted repository secrets, which
-  pull-request runs (including from forks) cannot read, and the deploy job is
-  gated so no fork can ship. The deploy key is scoped to this purpose and
-  revocable independently of any personal key. This refines D-006; the runtime
-  topology (one instance behind nginx) is unchanged.
+- Decision: two GitHub Actions workflows. **Container Image** builds the
+  multi-stage image and pushes it to the GitHub Container Registry
+  (`ghcr.io/ayenisholah/syncpad`), authenticated with the built-in job token (no
+  personal access token), on every push to `main` (tag `edge`), on `v*` tags,
+  and on demand; images also carry the git short SHA and release version.
+  **Deploy Production** is a manual `workflow_dispatch` (an `image_tag` input) —
+  nothing deploys on push. It runs against a GitHub **Environment** (`production`)
+  whose secrets hold the VPS host, user, a dedicated SSH deploy key, and the
+  pinned host key; it ships the `deploy/` bundle over scp and runs `docker
+  compose pull` + `up -d` + a create-doc smoke check. Compose selects the image
+  through `SYNCPAD_IMAGE`; the registry package is public so the host pulls
+  without a login.
+- Consequences: deploying is one click on a chosen tag, and rollback is the same
+  click on an older tag. Deploy credentials live only in the `production`
+  environment's encrypted secrets, which pull-request runs (including from forks)
+  cannot read, and deploy is manual-only so no push or fork can ship. Host-key
+  pinning (`StrictHostKeyChecking=yes`) and a purpose-scoped, independently
+  revocable deploy key keep the SSH path tight. The VPS needs no repository
+  clone. This refines D-006; the runtime topology (one instance behind nginx) is
+  unchanged.
 
 ## D-005: Client operation algebra — minimal TypeScript port now
 

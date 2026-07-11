@@ -121,11 +121,12 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 The container listens on `127.0.0.1:8090` with a volume for `/data` (the
 snapshots); an nginx server block fronts it. A graceful stop (SIGTERM) flushes
-dirty documents before exit. Continuous delivery is handled by GitHub Actions:
-it builds the image, publishes it to the GitHub Container Registry, and — on a
-version tag or a manual run — deploys to the host over SSH (`docker compose
-pull`). See [deploy/README.md](deploy/README.md) for the full VPS setup,
-including CI secrets, the nginx config, and TLS.
+dirty documents before exit. GitHub Actions builds the image and publishes it to
+the GitHub Container Registry; a separate one-click **Deploy Production**
+workflow ships it to the host over SSH (`docker compose pull`) using a
+`production` environment's secrets. See [deploy/README.md](deploy/README.md) for
+the full VPS setup, including key generation, the environment secrets, the nginx
+config, and TLS.
 
 ## Roadmap
 
