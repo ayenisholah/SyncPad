@@ -53,6 +53,27 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
   machine mirrors the ot.js semantics in TypeScript and is unit-tested
   transition by transition.
 
+## D-005: Client operation algebra — minimal TypeScript port now
+
+- Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni
+- Context: the browser client runs the ot.js state machine (D-003), which needs
+  `apply`/`compose`/`transform` locally to compose buffered edits and transform
+  incoming operations. The server's operation algebra lives in the
+  `operational-transform` crate; the client needs the same semantics in the
+  browser. Options: port the algebra to TypeScript, compile the crate to
+  WebAssembly, or depend on the original `ot` npm package (2014, unmaintained).
+- Decision: port the crate's operation algebra minimally into
+  `web/src/ops.ts` (a `TextOperation` with the same flat-array wire format and
+  Unicode-scalar-value counting), kept behind a small module boundary so a
+  WebAssembly build of the crate can replace it later without touching the
+  state machine. The `ot` package is not used.
+- Consequences: one small, dependency-free module carries the client algebra;
+  its correctness is guarded by unit tests that mirror the server (a TP1
+  property test over randomized concurrent operations, the crate's wire-format
+  fixtures, and shared known cases). A future WebAssembly swap would unify the
+  algebra on both sides behind the same interface; until then the two
+  implementations must be kept in agreement, which the shared tests enforce.
+
 ## D-004: Promote futures-util to a runtime dependency
 
 - Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni

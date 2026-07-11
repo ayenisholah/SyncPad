@@ -11,6 +11,15 @@ release.
 
 ### Added
 
+- Collaborative editor client (FR3, FR4): a Monaco editor wired to the sync
+  protocol through an operational-transform client. The client operation
+  algebra (`apply`/`compose`/`transform`) is a compact TypeScript port matching
+  the server's wire format and Unicode-scalar-value counting, guarded by a TP1
+  property test over randomized concurrent edits. The ot.js-style state machine
+  (synchronized / awaiting-confirm / awaiting-with-buffer) keeps one operation
+  in flight, buffers local edits, and transforms incoming operations before
+  applying them — with an echo guard and forced `\n` line endings so client and
+  server agree on offsets (D-005).
 - Document lifecycle limits (FR8, NFR6): an idle-document reaper drops
   in-memory documents with no connections after a configurable TTL (default
   24 h) and deletes their snapshots, along with orphan snapshot files older

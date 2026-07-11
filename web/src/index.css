@@ -91,3 +91,89 @@ code {
 .footer a {
   color: var(--muted);
 }
+
+/* Editor screen (spec §8.1): Monaco fills the viewport between a slim top bar
+   and a status line. */
+.editor-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 0.85rem;
+}
+
+.wordmark-sm {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.doc-slug {
+  font-size: 0.8rem;
+}
+
+.copy-link {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.copy-link:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.lang-tag {
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.editor-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.9rem;
+  border-top: 1px solid #2a2a2a;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-open {
+  background: #4ade80;
+}
+
+.status-connecting {
+  background: #fbbf24;
+}
+
+.status-closed {
+  background: #f87171;
+}
