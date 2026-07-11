@@ -1,0 +1,36 @@
+# Changelog
+
+All notable changes to SyncPad are documented in this file.
+
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) ·
+Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
+Changes accumulate under **[Unreleased]** and roll into a version at each
+release.
+
+## [Unreleased]
+
+### Added
+
+- Rust workspace with the axum server scaffold: document creation over
+  `POST /api/docs` with unguessable 8-character slugs, an in-memory document
+  registry, WebSocket connect on `/ws/:docId` that delivers the initial
+  document state, and static serving of the built frontend.
+- Wire-protocol message types for the sync protocol (`init`, `op`, `ack`,
+  `cursor`, `presence`, `language`, `ping`/`pong`, `resync`) with round-trip
+  serde tests.
+- Vite + React + TypeScript frontend shell: landing page that creates a
+  document and navigates to its `/d/:id` URL, a placeholder editor route, and
+  a first Vitest unit test.
+- CI workflow running the Rust format check, clippy with warnings denied, the
+  server test suite, and the frontend build and tests.
+
+## [0.0.1] - 2026-07-11
+
+### Added
+
+- Initial project documentation: README, engineering spec
+  (`docs/syncpad-engineering-doc.md`), decision log, and this changelog.
+- Contribution, security, and code-of-conduct policies plus issue and PR
+  templates.
+- Setup and verification scripts for local development.
+- Repo hygiene: MIT license, `.gitignore`, `.gitattributes`, `.editorconfig`.
