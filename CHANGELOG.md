@@ -11,6 +11,13 @@ release.
 
 ### Added
 
+- Server-side operational transforms (FR3): `op` messages are validated
+  against the replay window, transformed across concurrent revision-log
+  entries via the pinned `operational-transform` crate, applied, acked to
+  the sender, and broadcast to peers; rejected operations never mutate the
+  document and force the sender through a `resync` + fresh `init` recovery
+  path. Convergence of concurrent and stale-base edits is verified at the
+  task level and over real WebSocket connections.
 - Per-document tokio tasks that own document state: connections send
   commands over a channel and receive broadcast events, keeping all document
   mutation single-threaded; connections that lag behind the broadcast are
