@@ -32,6 +32,9 @@ export function Editor({ docId }: { docId: string }) {
   // Guards Monaco's change listener while we apply remote edits, so a remote
   // op is never echoed back to the server (the classic OT loop, spec §6.3).
   const applyingRemote = useRef(false);
+  // True while an IME is composing; outgoing ops are held until the composition
+  // ends so half-composed input is never sent or transformed (spec §6.3).
+  const composing = useRef(false);
   // The last content we and the server agree on, for diffing local edits and
   // mapping remote-op offsets. Kept in sync with the model's LF-normalized text.
   const contentRef = useRef("");
@@ -101,13 +104,28 @@ export function Editor({ docId }: { docId: string }) {
       model.setValue(contentRef.current);
       applyingRemote.current = false;
     }
-    model.onDidChangeContent(() => {
-      if (applyingRemote.current) return;
+    const flushLocalChange = () => {
       const next = model.getValue();
       const op = diffToOperation(contentRef.current, next);
       if (op.isNoop()) return;
       contentRef.current = next;
       connectionRef.current?.submit(op);
+    };
+
+    model.onDidChangeContent(() => {
+      // Remote edits are applied under the echo guard; IME intermediate states
+      // are held until composition ends.
+      if (applyingRemote.current || composing.current) return;
+      flushLocalChange();
+    });
+
+    editor.onDidCompositionStart(() => {
+      composing.current = true;
+    });
+    editor.onDidCompositionEnd(() => {
+      composing.current = false;
+      // Collapse the whole composition into one operation.
+      if (!applyingRemote.current) flushLocalChange();
     });
   };
 

@@ -4,6 +4,11 @@ node_modules/
 dist/
 coverage/
 
+# playwright e2e artifacts
+test-results/
+playwright-report/
+/web/playwright/.cache/
+
 # runtime document snapshots (spec §6.4) — disposable by policy
 /data/
 

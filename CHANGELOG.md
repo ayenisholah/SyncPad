@@ -11,6 +11,12 @@ release.
 
 ### Added
 
+- End-to-end convergence tests (Playwright): two browsers editing one document
+  with concurrent same-offset typing converge byte-identical, a late joiner is
+  seeded with the current content, and edits relay both directions. Run with
+  `npm run e2e` (builds the frontend, boots the server against it, drives
+  Chromium) and in CI on every push. The editor also buffers outgoing
+  operations during IME composition so half-composed input is never sent.
 - Collaborative editor client (FR3, FR4): a Monaco editor wired to the sync
   protocol through an operational-transform client. The client operation
   algebra (`apply`/`compose`/`transform`) is a compact TypeScript port matching
