@@ -177,3 +177,24 @@ code {
 .status-closed {
   background: #f87171;
 }
+
+/* Remote cursors (spec §6.3): a thin colored caret bar with a name label and a
+   translucent selection. Per-user color/name are injected by cursors.ts; these
+   base rules position and size the pieces. */
+.monaco-editor .view-overlays [class*="rc-"][class*="-selection"] {
+  border-radius: 2px;
+}
+
+/* The injected caret bar sits at a zero-width decoration; keep it from taking
+   layout width. */
+[class*="rc-"][class*="-bar"] {
+  display: inline-block;
+  width: 0;
+}
+
+[class*="rc-"][class*="-label"] {
+  position: relative;
+  top: -0.1em;
+  white-space: pre;
+  pointer-events: none;
+}

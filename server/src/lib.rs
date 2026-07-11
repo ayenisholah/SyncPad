@@ -182,8 +182,14 @@ async fn run_connection(socket: WebSocket, handle: DocHandle, joined: Joined) {
                             }
                             handle.op(self_id.clone(), base_revision, ops, sent_at).await;
                         }
-                        // cursor/setLanguage/ping handling arrives with
-                        // their features; valid messages are not an error.
+                        Ok(ClientMessage::Cursor {
+                            position,
+                            selection,
+                        }) => {
+                            handle.cursor(self_id.clone(), position, selection).await;
+                        }
+                        // setLanguage/ping handling arrives with their
+                        // features; valid messages are not an error.
                         Ok(message) => {
                             tracing::debug!(?message, "client message not handled yet");
                         }

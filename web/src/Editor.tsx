@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
-import { TextOperation, diffToOperation, operationToEdits } from "./ops";
-import { Connection, docSocketUrl, type ConnectionStatus } from "./connection";
+import { TextOperation, diffToOperation, operationToEdits, utf16ToCodePoint } from "./ops";
+import {
+  Connection,
+  docSocketUrl,
+  type ConnectionStatus,
+  type Participant,
+} from "./connection";
+import { RemoteCursors } from "./cursors";
+
+/** Throttle interval for outgoing cursor updates (spec §6.2). */
+const CURSOR_THROTTLE_MS = 50;
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: "connecting…",
@@ -38,6 +47,10 @@ export function Editor({ docId }: { docId: string }) {
   // The last content we and the server agree on, for diffing local edits and
   // mapping remote-op offsets. Kept in sync with the model's LF-normalized text.
   const contentRef = useRef("");
+  // Remote cursor decorations and the roster that names/colors them.
+  const remoteCursorsRef = useRef<RemoteCursors | null>(null);
+  const participantsRef = useRef<Map<string, Participant>>(new Map());
+  const selfIdRef = useRef("");
 
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [language, setLanguage] = useState("plaintext");
@@ -83,13 +96,33 @@ export function Editor({ docId }: { docId: string }) {
       onInit: (state) => {
         seedContent(state.content);
         setLanguage(state.language);
+        selfIdRef.current = state.selfId;
+        participantsRef.current = new Map(state.participants.map((p) => [p.id, p]));
+        remoteCursorsRef.current?.clear();
       },
       onApplyOperation: applyRemote,
+      onPresence: (joined, left) => {
+        if (joined) participantsRef.current.set(joined.id, joined);
+        if (left) {
+          participantsRef.current.delete(left);
+          remoteCursorsRef.current?.remove(left);
+        }
+      },
+      onCursor: (authorId, position, selection) => {
+        if (authorId === selfIdRef.current) return;
+        const peer = participantsRef.current.get(authorId);
+        if (!peer) return;
+        remoteCursorsRef.current?.set(authorId, peer.name, peer.color, position, selection);
+      },
       onStatus: setStatus,
     });
     connectionRef.current = connection;
     connection.connect();
-    return () => connection.close();
+    return () => {
+      connection.close();
+      remoteCursorsRef.current?.dispose();
+      remoteCursorsRef.current = null;
+    };
   }, [docId, applyRemote, seedContent]);
 
   const handleMount: OnMount = (editor, monacoApi) => {
@@ -126,6 +159,27 @@ export function Editor({ docId }: { docId: string }) {
       composing.current = false;
       // Collapse the whole composition into one operation.
       if (!applyingRemote.current) flushLocalChange();
+    });
+
+    // Remote-cursor decorations, and our own caret reported to peers (FR5).
+    remoteCursorsRef.current = new RemoteCursors(editor, monacoApi);
+
+    let cursorTimer: ReturnType<typeof setTimeout> | null = null;
+    const reportCursor = () => {
+      const selection = editor.getSelection();
+      if (!selection) return;
+      const text = model.getValue();
+      const head = utf16ToCodePoint(text, model.getOffsetAt(selection.getPosition()));
+      const anchor = utf16ToCodePoint(text, model.getOffsetAt(selection.getSelectionStart()));
+      connectionRef.current?.sendCursor(head, anchor !== head ? { anchor, head } : undefined);
+    };
+    editor.onDidChangeCursorSelection(() => {
+      // Trailing throttle: coalesce rapid movements into one send per interval.
+      if (cursorTimer) return;
+      cursorTimer = setTimeout(() => {
+        cursorTimer = null;
+        reportCursor();
+      }, CURSOR_THROTTLE_MS);
     });
   };
 

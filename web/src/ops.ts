@@ -380,6 +380,18 @@ export function codePointToUtf16(text: string, codePointIndex: number): number {
   return utf16;
 }
 
+/** Code-point index of a UTF-16 code-unit offset within `text`. */
+export function utf16ToCodePoint(text: string, utf16Offset: number): number {
+  let cp = 0;
+  let utf16 = 0;
+  for (const ch of text) {
+    if (utf16 >= utf16Offset) break;
+    utf16 += ch.length;
+    cp += 1;
+  }
+  return cp;
+}
+
 /**
  * Derive an operation from a single-range diff of `oldText` → `newText`
  * (common prefix/suffix, in code points). This turns an editor content change

@@ -14,7 +14,7 @@ use operational_transform::OperationSeq;
 use rand::Rng;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::protocol::{Participant, ServerMessage};
+use crate::protocol::{Participant, Selection, ServerMessage};
 use crate::registry::random_id;
 use crate::snapshot::{self, Snapshot};
 
@@ -99,6 +99,11 @@ enum DocCommand {
         ops: serde_json::Value,
         sent_at: u64,
     },
+    Cursor {
+        conn_id: String,
+        position: u64,
+        selection: Option<Selection>,
+    },
     Snapshot {
         reply: oneshot::Sender<Option<Snapshot>>,
     },
@@ -147,6 +152,19 @@ impl DocHandle {
             .await;
     }
 
+    /// Report this connection's caret/selection (spec FR5). Stored and
+    /// broadcast to peers; positions are character offsets at the current tip.
+    pub async fn cursor(&self, conn_id: String, position: u64, selection: Option<Selection>) {
+        let _ = self
+            .tx
+            .send(DocCommand::Cursor {
+                conn_id,
+                position,
+                selection,
+            })
+            .await;
+    }
+
     /// Take a snapshot of the document if it has unsaved changes (spec §6.4).
     /// `Some` clears the task's dirty flag and truncates its replay window;
     /// `None` means nothing changed since the last snapshot, or the task is
@@ -190,6 +208,9 @@ async fn run(
     events: broadcast::Sender<Envelope>,
 ) {
     let mut presence: HashMap<String, Participant> = HashMap::new();
+    // Latest caret/selection per connection, kept at the current tip by
+    // transforming through each accepted op (spec FR5, §6.1 step 4).
+    let mut cursors: HashMap<String, CursorState> = HashMap::new();
     // Ops accepted since the last snapshot; entry i is the op that produced
     // revision `log_start + i + 1`. A snapshot truncates this to a replay
     // window rooted at the snapshot revision (spec §6.4, FR9/FR10, NFR5).
@@ -223,22 +244,59 @@ async fn run(
 
                 presence.insert(self_id.clone(), participant.clone());
                 let _ = events.send(Envelope {
-                    recipients: Recipients::Except(self_id),
+                    recipients: Recipients::Except(self_id.clone()),
                     msg: ServerMessage::Presence {
                         joined: Some(participant),
                         left: None,
                     },
                 });
+                // Seed the new connection with peers' current cursors so it can
+                // draw them immediately, before those peers next move.
+                for (peer_id, cursor) in &cursors {
+                    let _ = events.send(Envelope {
+                        recipients: Recipients::Only(self_id.clone()),
+                        msg: ServerMessage::Cursor {
+                            author_id: peer_id.clone(),
+                            position: cursor.position,
+                            selection: cursor.selection,
+                        },
+                    });
+                }
                 let _ = reply.send(joined);
             }
             DocCommand::Leave { conn_id } => {
                 last_active = Instant::now();
+                cursors.remove(&conn_id);
                 if presence.remove(&conn_id).is_some() {
                     let _ = events.send(Envelope {
                         recipients: Recipients::All,
                         msg: ServerMessage::Presence {
                             joined: None,
                             left: Some(conn_id),
+                        },
+                    });
+                }
+            }
+            DocCommand::Cursor {
+                conn_id,
+                position,
+                selection,
+            } => {
+                // Only track cursors for present participants.
+                if presence.contains_key(&conn_id) {
+                    cursors.insert(
+                        conn_id.clone(),
+                        CursorState {
+                            position,
+                            selection,
+                        },
+                    );
+                    let _ = events.send(Envelope {
+                        recipients: Recipients::Except(conn_id.clone()),
+                        msg: ServerMessage::Cursor {
+                            author_id: conn_id,
+                            position,
+                            selection,
                         },
                     });
                 }
@@ -252,6 +310,7 @@ async fn run(
                 if handle_op(
                     &mut doc,
                     &mut log,
+                    &mut cursors,
                     &presence,
                     &events,
                     conn_id,
@@ -299,6 +358,7 @@ async fn run(
 fn handle_op(
     doc: &mut Doc,
     log: &mut Vec<OperationSeq>,
+    cursors: &mut HashMap<String, CursorState>,
     presence: &HashMap<String, Participant>,
     events: &broadcast::Sender<Envelope>,
     conn_id: String,
@@ -351,6 +411,16 @@ fn handle_op(
     log.push(operation.clone());
     doc.revision += 1;
 
+    // Keep every stored cursor at the new tip (spec §6.1 step 4). Clients also
+    // move their local decorations when they apply the op, so this is not
+    // re-broadcast; it keeps the authoritative state right for join-seeding.
+    for cursor in cursors.values_mut() {
+        cursor.position = transform_index(&operation, cursor.position);
+        if let Some(selection) = cursor.selection {
+            cursor.selection = Some(transform_selection(&operation, selection));
+        }
+    }
+
     let Ok(ops_json) = serde_json::to_value(&operation) else {
         // The op was applied; the document changed even though this broadcast
         // could not be serialized. Report it accepted so it is persisted.
@@ -372,6 +442,49 @@ fn handle_op(
         },
     });
     true
+}
+
+/// A connection's latest caret and optional selection, in character offsets.
+#[derive(Debug, Clone)]
+struct CursorState {
+    position: u64,
+    selection: Option<Selection>,
+}
+
+/// Map a character offset through an operation to its position afterward
+/// (spec FR5). Insertions before the offset push it right; deletions overlapping
+/// the prefix pull it left, clamping to the start of a deletion that spans it.
+/// Counts Unicode scalar values, matching the op algebra.
+fn transform_index(op: &OperationSeq, index: u64) -> u64 {
+    use operational_transform::Operation;
+
+    // `remaining` counts base-document characters still ahead of the offset;
+    // `moved` accumulates the transformed position.
+    let mut remaining = index as i64;
+    let mut moved = index as i64;
+    for component in op.ops() {
+        match component {
+            Operation::Retain(n) => remaining -= *n as i64,
+            Operation::Insert(s) => moved += s.chars().count() as i64,
+            Operation::Delete(n) => {
+                let deleted_before = remaining.min(*n as i64);
+                moved -= deleted_before;
+                remaining -= *n as i64;
+            }
+        }
+        if remaining < 0 {
+            break;
+        }
+    }
+    moved.max(0) as u64
+}
+
+/// Map both endpoints of a selection through an operation.
+fn transform_selection(op: &OperationSeq, selection: Selection) -> Selection {
+    Selection {
+        anchor: transform_index(op, selection.anchor),
+        head: transform_index(op, selection.head),
+    }
 }
 
 /// Recovery path (spec §6.2): tell one connection to drop its state, then
@@ -750,6 +863,120 @@ mod tests {
         let late = handle.join().await.expect("late join");
         assert_eq!(late.content, "abc");
         assert_eq!(late.revision, 0);
+    }
+
+    fn seq(build: impl FnOnce(&mut OperationSeq)) -> OperationSeq {
+        let mut op = OperationSeq::default();
+        build(&mut op);
+        op
+    }
+
+    #[test]
+    fn transform_index_shifts_for_inserts_before_the_caret() {
+        // "abcde", caret at 2; insert "XY" at offset 0 → caret moves to 4.
+        let op = seq(|o| {
+            o.insert("XY");
+            o.retain(5);
+        });
+        assert_eq!(transform_index(&op, 2), 4);
+    }
+
+    #[test]
+    fn transform_index_ignores_inserts_after_the_caret() {
+        // "abcde", caret at 2; insert "XY" at offset 3 → caret stays at 2.
+        let op = seq(|o| {
+            o.retain(3);
+            o.insert("XY");
+            o.retain(2);
+        });
+        assert_eq!(transform_index(&op, 2), 2);
+    }
+
+    #[test]
+    fn transform_index_clamps_a_caret_inside_a_deletion() {
+        // "abcde", caret at 2; delete offsets 1..4 → caret clamps to 1.
+        let op = seq(|o| {
+            o.retain(1);
+            o.delete(3);
+            o.retain(1);
+        });
+        assert_eq!(transform_index(&op, 2), 1);
+    }
+
+    #[test]
+    fn transform_index_pulls_back_for_deletions_before_the_caret() {
+        // "abcde", caret at 4; delete offsets 0..2 → caret moves to 2.
+        let op = seq(|o| {
+            o.delete(2);
+            o.retain(3);
+        });
+        assert_eq!(transform_index(&op, 4), 2);
+    }
+
+    #[test]
+    fn transform_index_counts_code_points_not_bytes() {
+        // Insert a multibyte scalar before the caret shifts it by one, not by
+        // its UTF-8 byte length.
+        let op = seq(|o| {
+            o.insert("🦀");
+            o.retain(3);
+        });
+        assert_eq!(transform_index(&op, 1), 2);
+    }
+
+    #[tokio::test]
+    async fn cursor_is_broadcast_to_peers_but_not_the_author() {
+        let handle = spawn(Doc::default());
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+        let b = handle.join().await.expect("join b");
+        let _ = a.events.recv().await.expect("b join");
+
+        handle.cursor(b.self_id.clone(), 3, None).await;
+
+        let event = a.events.recv().await.expect("cursor event");
+        assert_eq!(event.recipients, Recipients::Except(b.self_id.clone()));
+        match event.msg {
+            ServerMessage::Cursor {
+                author_id,
+                position,
+                selection,
+            } => {
+                assert_eq!(author_id, b.self_id);
+                assert_eq!(position, 3);
+                assert!(selection.is_none());
+            }
+            other => panic!("expected cursor, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_late_joiner_is_seeded_with_existing_cursors() {
+        let handle = spawn(Doc::default());
+        let a = handle.join().await.expect("join a");
+        handle.cursor(a.self_id.clone(), 5, None).await;
+
+        // B joins after A reported a cursor: B's stream carries A's cursor.
+        let mut b = handle.join().await.expect("join b");
+        let mut saw_a_cursor = false;
+        for _ in 0..4 {
+            match b.events.try_recv() {
+                Ok(envelope) => {
+                    if let ServerMessage::Cursor {
+                        author_id,
+                        position,
+                        ..
+                    } = envelope.msg
+                        && author_id == a.self_id
+                        && position == 5
+                    {
+                        saw_a_cursor = true;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(saw_a_cursor, "late joiner should receive A's cursor");
     }
 
     #[tokio::test]

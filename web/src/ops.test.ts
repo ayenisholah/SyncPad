@@ -7,6 +7,7 @@ import {
   diffToOperation,
   operationToEdits,
   codePointToUtf16,
+  utf16ToCodePoint,
 } from "./ops";
 
 /** A small seeded PRNG (mulberry32) so the property tests are reproducible. */
@@ -136,6 +137,13 @@ describe("offset mapping (editor glue)", () => {
     // "🦀" is two UTF-16 units; code-point index 1 is UTF-16 offset 2.
     expect(codePointToUtf16("🦀z", 1)).toBe(2);
     expect(codePointToUtf16("🦀z", 2)).toBe(3);
+  });
+
+  it("utf16ToCodePoint inverts codePointToUtf16 across astral text", () => {
+    const text = "a🦀b中c";
+    for (let cp = 0; cp <= Array.from(text).length; cp += 1) {
+      expect(utf16ToCodePoint(text, codePointToUtf16(text, cp))).toBe(cp);
+    }
   });
 
   it("operationToEdits yields UTF-16 spans over an astral document", () => {

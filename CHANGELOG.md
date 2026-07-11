@@ -11,6 +11,14 @@ release.
 
 ### Added
 
+- Live remote cursors and selections (FR5): each participant's caret and
+  selection appear in every other editor, colored and name-tagged. The server
+  tracks each cursor and transforms it through every accepted operation so it
+  stays at the right character offset as the text shifts, broadcasts cursor
+  updates to peers, seeds a new connection with existing cursors, and drops a
+  cursor when its author leaves. Clients report their caret throttled to 50 ms
+  and render remote cursors as Monaco decorations. Also moved the local dev and
+  end-to-end server port to 8090.
 - End-to-end convergence tests (Playwright): two browsers editing one document
   with concurrent same-offset typing converge byte-identical, a late joiner is
   seeded with the current content, and edits relay both directions. Run with

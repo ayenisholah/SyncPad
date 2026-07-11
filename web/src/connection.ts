@@ -26,6 +26,12 @@ export interface InitState {
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
+/** A selection range in character offsets (anchor may follow head). */
+export interface Selection {
+  anchor: number;
+  head: number;
+}
+
 export interface ConnectionHandlers {
   /** Fresh document state: the editor should reset to `content`. */
   onInit(state: InitState): void;
@@ -33,6 +39,8 @@ export interface ConnectionHandlers {
   onApplyOperation(operation: TextOperation): void;
   /** Roster delta (spec FR6). */
   onPresence?(joined: Participant | undefined, left: string | undefined): void;
+  /** A peer's caret/selection at the current revision (spec FR5). */
+  onCursor?(authorId: string, position: number, selection: Selection | undefined): void;
   /** The server forced a resync; editor state will be replaced by the next init. */
   onResync?(): void;
   /** Connection lifecycle, for the status bar. */
@@ -113,6 +121,13 @@ export class Connection {
     this.client?.applyClient(operation);
   }
 
+  /** Report the local caret/selection to the server (spec FR5). */
+  sendCursor(position: number, selection?: Selection): void {
+    this.socket?.send(
+      JSON.stringify({ type: "cursor", position, selection: selection ?? null }),
+    );
+  }
+
   /** The revision the client currently believes it is at. */
   get revision(): number {
     return this.client?.revision ?? 0;
@@ -165,7 +180,15 @@ export class Connection {
         );
         break;
       }
-      // cursor / language / pong arrive with their features (W2D3).
+      case "cursor": {
+        this.handlers.onCursor?.(
+          message.authorId as string,
+          message.position as number,
+          (message.selection as Selection | null) ?? undefined,
+        );
+        break;
+      }
+      // language / pong arrive with their features (W2D3-2).
       default:
         break;
     }
