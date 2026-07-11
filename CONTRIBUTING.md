@@ -26,10 +26,14 @@ powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 
 - `cargo test --workspace` runs the server suite; `npm test` in `web/` runs
   the frontend suite.
-- Synchronization correctness is the project. Once the convergence fuzz
-  harness lands, it is the most important test in the repository: changes to
-  operation handling, the revision log, or the client state machine must keep
-  it green and should extend it where behavior changes.
+- Synchronization correctness is the project. The convergence fuzz harness
+  (`server/tests/fuzz_convergence.rs`) is the most important test in the
+  repository: changes to operation handling, the revision log, or the client
+  state machine must keep it green and should extend it where behavior
+  changes. CI runs fixed seeds; for longer local runs crank it up with
+  `SYNCPAD_FUZZ_SEEDS=500 SYNCPAD_FUZZ_ROUNDS=400 cargo test -p
+  syncpad-server --test fuzz_convergence`. A failure names its seed — when
+  fixing a bug found this way, keep that seed as a regression case.
 - The OT transform algebra comes from the `operational-transform` crate and
   is never reimplemented here; tests exercise the protocol around it
   (ordering, acks, resync, cursor transformation), not the transform math.
