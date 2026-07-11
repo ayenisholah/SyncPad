@@ -11,6 +11,14 @@ release.
 
 ### Added
 
+- Document snapshots (FR9): dirty documents are written to
+  `data/<docId>.json` (content, revision, language, updated-at) every 30 s and
+  flushed on graceful shutdown, using an atomic temp-file-plus-rename write.
+  Unknown document ids are hydrated lazily from their snapshot on first
+  access, so a restart recovers live documents; the replay window is truncated
+  at each snapshot to keep memory bounded. The snapshot interval and data
+  directory are configurable via `SYNCPAD_SNAPSHOT_SECS` and
+  `SYNCPAD_DATA_DIR`.
 - Convergence fuzz harness: seeded, reproducible scenarios drive 2–5
   simulated clients (full ot.js-style state machine: one op in flight,
   compose-into-buffer, transform-on-remote) through randomized concurrent

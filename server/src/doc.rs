@@ -15,6 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::protocol::{Participant, ServerMessage};
 use crate::registry::random_id;
+use crate::snapshot::{self, Snapshot};
 
 const COMMAND_BUFFER: usize = 64;
 const EVENT_BUFFER: usize = 256;
@@ -97,6 +98,9 @@ enum DocCommand {
         ops: serde_json::Value,
         sent_at: u64,
     },
+    Snapshot {
+        reply: oneshot::Sender<Option<Snapshot>>,
+    },
 }
 
 /// Cheap-to-clone handle for sending commands to a document task.
@@ -137,6 +141,16 @@ impl DocHandle {
             })
             .await;
     }
+
+    /// Take a snapshot of the document if it has unsaved changes (spec §6.4).
+    /// `Some` clears the task's dirty flag and truncates its replay window;
+    /// `None` means nothing changed since the last snapshot, or the task is
+    /// gone. See the snapshot service in [`crate::snapshot`].
+    pub async fn snapshot(&self) -> Option<Snapshot> {
+        let (reply, response) = oneshot::channel();
+        self.tx.send(DocCommand::Snapshot { reply }).await.ok()?;
+        response.await.ok().flatten()
+    }
 }
 
 /// Spawn the task owning one document and return its handle. The task ends
@@ -155,10 +169,13 @@ async fn run(
     events: broadcast::Sender<Envelope>,
 ) {
     let mut presence: HashMap<String, Participant> = HashMap::new();
-    // Ops accepted since spawn; snapshots will truncate this to a replay
-    // window (spec FR9/FR10). Entry i is the op that produced revision
-    // `log_start + i + 1`.
+    // Ops accepted since the last snapshot; entry i is the op that produced
+    // revision `log_start + i + 1`. A snapshot truncates this to a replay
+    // window rooted at the snapshot revision (spec §6.4, FR9/FR10, NFR5).
     let mut log: Vec<OperationSeq> = Vec::new();
+    // Set on every accepted op; cleared when a snapshot is taken. A hydrated
+    // document starts clean — its content already matches its snapshot.
+    let mut dirty = false;
 
     while let Some(command) = commands.recv().await {
         match command {
@@ -206,7 +223,7 @@ async fn run(
                 ops,
                 sent_at,
             } => {
-                handle_op(
+                if handle_op(
                     &mut doc,
                     &mut log,
                     &presence,
@@ -215,7 +232,28 @@ async fn run(
                     base_revision,
                     ops,
                     sent_at,
-                );
+                ) {
+                    dirty = true;
+                }
+            }
+            DocCommand::Snapshot { reply } => {
+                let snapshot = if dirty {
+                    // Clear dirty and truncate the replay window optimistically,
+                    // before the write is confirmed: the content stays safely in
+                    // memory, and any accepted op re-marks dirty, so a failed
+                    // write costs at most one interval (spec §6.4 tolerance).
+                    dirty = false;
+                    log.clear();
+                    Some(Snapshot {
+                        content: doc.content.clone(),
+                        revision: doc.revision,
+                        language: doc.language.clone(),
+                        updated_at: snapshot::now_ms(),
+                    })
+                } else {
+                    None
+                };
+                let _ = reply.send(snapshot);
             }
         }
     }
@@ -224,6 +262,8 @@ async fn run(
 /// The four-step op algorithm from spec §6.1: validate the replay window,
 /// transform against concurrent ops, apply, then ack and broadcast. Every
 /// rejection leaves the document untouched and forces the sender to resync.
+/// Returns `true` when the op was accepted and mutated the document, so the
+/// caller can mark it dirty for the next snapshot.
 #[allow(clippy::too_many_arguments)]
 fn handle_op(
     doc: &mut Doc,
@@ -234,7 +274,7 @@ fn handle_op(
     base_revision: u64,
     ops: serde_json::Value,
     sent_at: u64,
-) {
+) -> bool {
     let log_start = doc.revision - log.len() as u64;
     if base_revision > doc.revision || base_revision < log_start {
         tracing::debug!(
@@ -245,13 +285,13 @@ fn handle_op(
             "op outside the replay window; forcing resync"
         );
         resync(doc, presence, events, &conn_id);
-        return;
+        return false;
     }
 
     let Ok(mut operation) = serde_json::from_value::<OperationSeq>(ops) else {
         tracing::debug!(conn_id, "unparseable operation; forcing resync");
         resync(doc, presence, events, &conn_id);
-        return;
+        return false;
     };
 
     for concurrent in &log[(base_revision - log_start) as usize..] {
@@ -260,7 +300,7 @@ fn handle_op(
             Err(error) => {
                 tracing::debug!(conn_id, %error, "transform failed; forcing resync");
                 resync(doc, presence, events, &conn_id);
-                return;
+                return false;
             }
         }
     }
@@ -272,7 +312,7 @@ fn handle_op(
             // must never be corrupted on its behalf.
             tracing::debug!(conn_id, %error, "apply failed; forcing resync");
             resync(doc, presence, events, &conn_id);
-            return;
+            return false;
         }
     };
 
@@ -281,7 +321,9 @@ fn handle_op(
     doc.revision += 1;
 
     let Ok(ops_json) = serde_json::to_value(&operation) else {
-        return;
+        // The op was applied; the document changed even though this broadcast
+        // could not be serialized. Report it accepted so it is persisted.
+        return true;
     };
     let _ = events.send(Envelope {
         recipients: Recipients::Only(conn_id.clone()),
@@ -298,6 +340,7 @@ fn handle_op(
             sent_at,
         },
     });
+    true
 }
 
 /// Recovery path (spec §6.2): tell one connection to drop its state, then

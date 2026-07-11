@@ -4,6 +4,7 @@
 pub mod doc;
 pub mod protocol;
 pub mod registry;
+pub mod snapshot;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,7 +64,7 @@ async fn ws_upgrade(
 }
 
 async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState) {
-    let handle = state.registry.handle(&doc_id);
+    let handle = state.registry.handle(&doc_id).await;
     let Some(joined) = handle.join().await else {
         tracing::warn!(doc_id, "document task unavailable; closing connection");
         return;

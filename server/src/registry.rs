@@ -4,11 +4,14 @@
 //! snapshot hydration replaces the plain create-on-demand path once
 //! persistence lands.
 
+use std::path::{Path, PathBuf};
+
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rand::Rng;
 
 use crate::doc::{self, Doc, DocHandle};
+use crate::snapshot;
 
 /// 32-character alphabet without visually ambiguous letters (i, l, o, u),
 /// after Crockford base32. 8 characters give 32^8 ≈ 1.1 × 10^12 slugs.
@@ -33,13 +36,34 @@ pub fn generate_slug() -> String {
     random_id(SLUG_LEN)
 }
 
-/// docId → handle of the owning task, created on demand.
-#[derive(Debug, Default)]
+/// docId → handle of the owning task, created on demand. Snapshots are read
+/// from and written under `data_dir` (spec §6.4).
+#[derive(Debug)]
 pub struct Registry {
     docs: DashMap<String, DocHandle>,
+    data_dir: PathBuf,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::with_data_dir("data")
+    }
 }
 
 impl Registry {
+    /// A registry that hydrates from and snapshots to `data_dir`.
+    pub fn with_data_dir(data_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            docs: DashMap::new(),
+            data_dir: data_dir.into(),
+        }
+    }
+
+    /// The directory holding this registry's snapshots.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Create a fresh empty document and return its slug. Retries on the
     /// (astronomically unlikely) slug collision rather than overwriting.
     pub fn create(&self) -> String {
@@ -52,15 +76,41 @@ impl Registry {
         }
     }
 
-    /// Handle to a document's task, spawning an empty document if the id is
-    /// unknown (spec §6.4: unknown ids are treated as new documents until
-    /// snapshot hydration exists).
-    pub fn handle(&self, id: &str) -> DocHandle {
+    /// Handle to a document's task. A live document is returned as-is; an
+    /// unknown id is hydrated from its snapshot if one exists, else spawned
+    /// fresh (spec §6.4 lazy load).
+    pub async fn handle(&self, id: &str) -> DocHandle {
+        // Fast path: already live. Cloning the handle releases the map lock
+        // before the await below.
+        if let Some(handle) = self.docs.get(id).map(|h| h.value().clone()) {
+            return handle;
+        }
+
+        // Load outside the map lock (I/O must not be held across the shard).
+        let doc = match snapshot::load(&self.data_dir, id).await {
+            Some(snapshot) => Doc {
+                content: snapshot.content,
+                revision: snapshot.revision,
+                language: snapshot.language,
+            },
+            None => Doc::default(),
+        };
+
+        // Re-check under the entry lock: a concurrent join may have spawned
+        // this doc while we were loading. If so, keep theirs and drop ours.
+        match self.docs.entry(id.to_string()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => entry.insert(doc::spawn(doc)).value().clone(),
+        }
+    }
+
+    /// Snapshots of every live document's id and handle, for the snapshot
+    /// service to iterate without holding the map lock across awaits.
+    pub fn handles(&self) -> Vec<(String, DocHandle)> {
         self.docs
-            .entry(id.to_string())
-            .or_insert_with(|| doc::spawn(Doc::default()))
-            .value()
-            .clone()
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
     }
 
     /// Whether a document with this id currently exists.
@@ -111,7 +161,7 @@ mod tests {
         assert_eq!(registry.doc_count(), 1);
 
         // The spawned task serves fresh-document state.
-        let joined = registry.handle(&slug).join().await.expect("join");
+        let joined = registry.handle(&slug).await.join().await.expect("join");
         assert_eq!(joined.revision, 0);
         assert_eq!(joined.content, "");
         assert_eq!(joined.language, "plaintext");
@@ -122,7 +172,12 @@ mod tests {
         let registry = Registry::default();
         assert!(!registry.contains("x7k2p9q1"));
 
-        let joined = registry.handle("x7k2p9q1").join().await.expect("join");
+        let joined = registry
+            .handle("x7k2p9q1")
+            .await
+            .join()
+            .await
+            .expect("join");
         assert_eq!(joined.revision, 0);
         assert!(registry.contains("x7k2p9q1"));
     }
@@ -132,8 +187,18 @@ mod tests {
         let registry = Registry::default();
         let slug = registry.create();
 
-        let first = registry.handle(&slug).join().await.expect("first join");
-        let second = registry.handle(&slug).join().await.expect("second join");
+        let first = registry
+            .handle(&slug)
+            .await
+            .join()
+            .await
+            .expect("first join");
+        let second = registry
+            .handle(&slug)
+            .await
+            .join()
+            .await
+            .expect("second join");
 
         // Same task: the second join sees the first participant.
         assert_eq!(second.participants.len(), 1);
