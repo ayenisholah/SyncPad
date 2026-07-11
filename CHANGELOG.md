@@ -17,6 +17,11 @@ release.
   (config and setup in `deploy/`). The server now shuts down gracefully on
   SIGTERM (flushing snapshots), and resolves the real client IP from a
   forwarded header so the per-connection limits stay per-user behind the proxy.
+- Continuous delivery: a GitHub Actions workflow builds the image and publishes
+  it to the GitHub Container Registry on every push to `main`, then — on a
+  version tag or a manual run — deploys to the host over SSH (`docker compose
+  pull` + `up -d`). Images are tagged by git SHA, `latest`, and release version
+  for rollback; the compose file pulls the selected tag from the registry.
 - Editor chrome (FR7, G3, G5, §8.1): a language picker in the top bar changes
   syntax highlighting for every window (server-validated against an allowlist,
   broadcast to all, and persisted in the snapshot), a presence bar shows who

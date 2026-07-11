@@ -1,0 +1,74 @@
+name: Deploy
+
+# Build the image on every push to main; publish it to GHCR; deploy to the VPS
+# only on a version tag (v*) or a manual run. Pull-request runs never receive
+# secrets and the deploy job is gated to tags/dispatch, so a fork cannot deploy.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/ayenisholah/syncpad
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    # Only ship to the VPS for a tagged release or a manual run — never on an
+    # ordinary push to main.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Roll the container on the VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          # The tag drives which image the compose file pulls. For a v* tag use
+          # the semver (strip refs/tags/); otherwise deploy latest.
+          envs: GITHUB_REF_NAME,GITHUB_REF_TYPE
+          script: |
+            set -euo pipefail
+            cd ~/SyncPad
+            git pull --ff-only
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              export SYNCPAD_TAG="${GITHUB_REF_NAME#v}"
+            else
+              export SYNCPAD_TAG="latest"
+            fi
+            docker compose -f deploy/docker-compose.yml pull
+            docker compose -f deploy/docker-compose.yml up -d

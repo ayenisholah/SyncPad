@@ -72,6 +72,28 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
   because the container is not publicly bound and is reachable solely through
   the proxy. Multi-region or high-availability deployment is out of scope.
 
+## D-007: Continuous delivery via GitHub Actions to GHCR and the VPS
+
+- Date: 2026-07-12 · Status: Approved · Decider: Shola Ayeni
+- Context: the single-instance deployment (D-006) needs a repeatable way to build
+  the image and roll the container without hand-building on the host. The source
+  lives on GitHub, so its Actions and Container Registry are already available.
+- Decision: a GitHub Actions workflow builds the multi-stage image and pushes it
+  to the GitHub Container Registry (`ghcr.io/ayenisholah/syncpad`), authenticated
+  with the built-in job token (no personal access token). Build-and-push runs on
+  every push to `main`; deployment is gated to version tags (`v*`) and manual
+  dispatch, and connects to the VPS over SSH with a dedicated deploy key to run
+  `docker compose pull` + `up -d`. Images are tagged with the git short SHA,
+  `latest`, and the release version to allow rollback. The registry package is
+  public so the host pulls without a login. Compose selects the running version
+  through `SYNCPAD_TAG`.
+- Consequences: releases are a single tag push and roll back by re-deploying an
+  older tag. Deploy credentials live only in encrypted repository secrets, which
+  pull-request runs (including from forks) cannot read, and the deploy job is
+  gated so no fork can ship. The deploy key is scoped to this purpose and
+  revocable independently of any personal key. This refines D-006; the runtime
+  topology (one instance behind nginx) is unchanged.
+
 ## D-005: Client operation algebra — minimal TypeScript port now
 
 - Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni
