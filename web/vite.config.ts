@@ -7,8 +7,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8080",
-      "/ws": { target: "ws://127.0.0.1:8080", ws: true },
+      "/api": "http://127.0.0.1:8090",
+      "/ws": { target: "ws://127.0.0.1:8090", ws: true },
     },
   },
   // Unit tests live in src/; the Playwright e2e suite (e2e/) runs separately.

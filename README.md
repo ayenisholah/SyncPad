@@ -103,7 +103,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 Run the server and frontend during development:
 
 ```sh
-cargo run -p syncpad-server        # server on http://127.0.0.1:8080
+cargo run -p syncpad-server        # server on http://127.0.0.1:8090
 cd web && npm run dev              # Vite dev server proxying /api and /ws
 ```
 

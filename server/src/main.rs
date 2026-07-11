@@ -51,7 +51,7 @@ async fn main() {
         Duration::from_secs(doc_ttl_secs),
     );
 
-    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8090".to_string());
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
         .await

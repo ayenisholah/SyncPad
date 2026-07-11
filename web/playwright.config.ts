@@ -5,7 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
 // first. Monaco is loaded via its default (CDN) loader, so these tests need
 // network access until the editor is self-hosted (W2D4).
 
-const PORT = 8080;
+const PORT = 8090;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
