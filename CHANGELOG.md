@@ -11,6 +11,13 @@ release.
 
 ### Added
 
+- Per-document tokio tasks that own document state: connections send
+  commands over a channel and receive broadcast events, keeping all document
+  mutation single-threaded; connections that lag behind the broadcast are
+  told to resync.
+- Presence: server-assigned adjective-animal names and palette colors,
+  join/leave events broadcast to peers, and the current roster delivered in
+  `init`, verified end to end over real WebSocket connections.
 - Rust workspace with the axum server scaffold: document creation over
   `POST /api/docs` with unguessable 8-character slugs, an in-memory document
   registry, WebSocket connect on `/ws/:docId` that delivers the initial

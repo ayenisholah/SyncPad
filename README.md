@@ -10,11 +10,11 @@ database — documents live in memory with periodic snapshots to disk.
 
 ## Status
 
-Pre-alpha. The scaffold is in place: document creation over HTTP with
-unguessable slug URLs, WebSocket connect that delivers the initial document
-state, the wire-protocol message types, and the Vite/React frontend shell.
-The next step is the per-document task with presence and broadcast wiring,
-followed by server-side OT.
+Pre-alpha. Document creation, the wire protocol, and the per-document task
+model are in place: each live document is owned by one tokio task,
+connections join it over WebSockets, and presence (server-assigned names and
+colors, join/leave events, roster in `init`) is broadcast to peers. The next
+step is server-side OT against the revision log.
 
 | Area | Status |
 |---|---|
@@ -22,7 +22,7 @@ followed by server-side OT.
 | WebSocket connect with `init` document state | Done |
 | Wire-protocol message types (tested codecs) | Done |
 | Frontend shell (landing page, editor route) | Done |
-| Per-document task: presence, broadcast | Planned |
+| Per-document task: presence, broadcast | Done |
 | Server-side OT against the revision log | Planned |
 | Convergence fuzz harness | Planned |
 | Snapshots + idle expiry (no database) | Planned |
@@ -108,16 +108,15 @@ cd web && npm run dev              # Vite dev server proxying /api and /ws
 
 Ordered so that sync correctness is proven before any editor UI exists:
 
-1. Per-document task and registry: presence join/leave, broadcast wiring.
-2. OT integration: transform against the revision log, ack/broadcast, resync.
-3. Convergence fuzz harness — N scripted clients, random concurrent
+1. OT integration: transform against the revision log, ack/broadcast, resync.
+2. Convergence fuzz harness — N scripted clients, random concurrent
    operations, byte-identical convergence asserted. The most important test
    in the repository; it gates everything after it.
-4. Snapshots, idle expiry, per-connection limits.
-5. Monaco editor and the client OT state machine; two browsers typing.
-6. Live cursors and selections, presence bar, language picker, latency
+3. Snapshots, idle expiry, per-connection limits.
+4. Monaco editor and the client OT state machine; two browsers typing.
+5. Live cursors and selections, presence bar, language picker, latency
    readout.
-7. Deployment, then measured latency and concurrency numbers.
+6. Deployment, then measured latency and concurrency numbers.
 
 ## Scope
 
