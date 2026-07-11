@@ -11,6 +11,13 @@ release.
 
 ### Added
 
+- Convergence fuzz harness: seeded, reproducible scenarios drive 2–5
+  simulated clients (full ot.js-style state machine: one op in flight,
+  compose-into-buffer, transform-on-remote) through randomized concurrent
+  inserts and deletes — including multibyte characters — with delayed event
+  processing, asserting byte-identical convergence between every client and
+  the server. Runs in CI on every push; failures name their seed, and the
+  workload is tunable via `SYNCPAD_FUZZ_SEEDS`/`SYNCPAD_FUZZ_ROUNDS`.
 - Server-side operational transforms (FR3): `op` messages are validated
   against the replay window, transformed across concurrent revision-log
   entries via the pinned `operational-transform` crate, applied, acked to

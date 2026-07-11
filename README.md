@@ -10,12 +10,14 @@ database — documents live in memory with periodic snapshots to disk.
 
 ## Status
 
-Pre-alpha. The sync core is in place: each live document is owned by one
-tokio task, concurrent operations are transformed against the revision log
-(via the `operational-transform` crate) and broadcast to peers with acks and
-a resync recovery path, and presence (server-assigned names and colors,
-join/leave events, roster in `init`) tracks who is editing. The next step is
-the convergence fuzz harness that gates everything after it.
+Pre-alpha. The sync core is in place and fuzz-verified: each live document
+is owned by one tokio task, concurrent operations are transformed against
+the revision log (via the `operational-transform` crate) and broadcast to
+peers with acks and a resync recovery path, and a seeded fuzz harness
+drives simulated clients through randomized concurrent editing to assert
+byte-identical convergence on every run. Presence (server-assigned names
+and colors, join/leave events, roster in `init`) tracks who is editing.
+Next up: snapshots and document lifecycle, then the editor frontend.
 
 | Area | Status |
 |---|---|
@@ -25,7 +27,7 @@ the convergence fuzz harness that gates everything after it.
 | Frontend shell (landing page, editor route) | Done |
 | Per-document task: presence, broadcast | Done |
 | Server-side OT against the revision log | Done |
-| Convergence fuzz harness | Planned |
+| Convergence fuzz harness | Done |
 | Snapshots + idle expiry (no database) | Planned |
 | Monaco editor + client OT state machine | Planned |
 | Live cursors, selections, presence list | Planned |
@@ -109,14 +111,11 @@ cd web && npm run dev              # Vite dev server proxying /api and /ws
 
 Ordered so that sync correctness is proven before any editor UI exists:
 
-1. Convergence fuzz harness — N scripted clients, random concurrent
-   operations, byte-identical convergence asserted. The most important test
-   in the repository; it gates everything after it.
-2. Snapshots, idle expiry, per-connection limits.
-3. Monaco editor and the client OT state machine; two browsers typing.
-4. Live cursors and selections, presence bar, language picker, latency
+1. Snapshots, idle expiry, per-connection limits.
+2. Monaco editor and the client OT state machine; two browsers typing.
+3. Live cursors and selections, presence bar, language picker, latency
    readout.
-5. Deployment, then measured latency and concurrency numbers.
+4. Deployment, then measured latency and concurrency numbers.
 
 ## Scope
 
