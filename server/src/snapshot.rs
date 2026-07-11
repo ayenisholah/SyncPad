@@ -100,6 +100,84 @@ pub fn spawn_service(
     })
 }
 
+/// Expire idle documents and stale snapshots (spec FR8, §6.4). Live documents
+/// idle beyond `idle_after` with no connections are dropped from the registry
+/// and their snapshot removed; snapshot files for documents that are not live
+/// and whose mtime is older than `idle_after` are deleted as orphans.
+pub async fn reap(registry: &Registry, data_dir: &Path, idle_after: Duration) {
+    for (id, handle) in registry.handles() {
+        if handle.should_reap(idle_after).await {
+            registry.remove(&id);
+            let path = path_for(data_dir, &id);
+            if let Err(error) = tokio::fs::remove_file(&path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(id, %error, "failed to delete snapshot for reaped doc");
+            }
+            tracing::info!(id, "reaped idle document");
+        }
+    }
+
+    reap_orphan_snapshots(registry, data_dir, idle_after).await;
+}
+
+/// Delete snapshot files for documents that are not live and whose mtime is
+/// older than `idle_after` (spec §6.4 mtime rule).
+async fn reap_orphan_snapshots(registry: &Registry, data_dir: &Path, idle_after: Duration) {
+    let mut entries = match tokio::fs::read_dir(data_dir).await {
+        Ok(entries) => entries,
+        // No data dir yet means nothing to clean up.
+        Err(_) => return,
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        // Only finished snapshots (`<id>.json`), never in-progress `.tmp`.
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if registry.contains(id) {
+            continue;
+        }
+
+        let stale = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|mtime| mtime.elapsed().ok())
+            .is_some_and(|age| age >= idle_after);
+        if stale {
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                tracing::warn!(id, %error, "failed to delete orphan snapshot");
+            } else {
+                tracing::info!(id, "deleted stale snapshot");
+            }
+        }
+    }
+}
+
+/// Spawn the periodic reaper: every `interval`, expire idle docs and stale
+/// snapshots older than `idle_after`. The first tick fires after one interval.
+pub fn spawn_reaper(
+    registry: Arc<Registry>,
+    data_dir: PathBuf,
+    interval: Duration,
+    idle_after: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await; // consume the immediate first tick
+        loop {
+            ticker.tick().await;
+            reap(&registry, &data_dir, idle_after).await;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

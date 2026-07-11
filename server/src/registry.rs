@@ -113,6 +113,13 @@ impl Registry {
             .collect()
     }
 
+    /// Drop a document from the registry (spec FR8 reaper). The owning task
+    /// ends once every handle is gone; an idle doc has no connections holding
+    /// handles, so removal here lets it exit.
+    pub fn remove(&self, id: &str) {
+        self.docs.remove(id);
+    }
+
     /// Whether a document with this id currently exists.
     pub fn contains(&self, id: &str) -> bool {
         self.docs.contains_key(id)

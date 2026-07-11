@@ -19,7 +19,9 @@ async fn spawn_server(state: AppState) -> std::net::SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
     tokio::spawn(async move {
-        axum::serve(listener, app(state)).await.expect("serve");
+        // Connect info is required by the WS handler for the per-IP cap.
+        let service = app(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+        axum::serve(listener, service).await.expect("serve");
     });
     addr
 }
@@ -262,6 +264,61 @@ async fn out_of_window_ops_force_resync() {
     assert_eq!(init["revision"], 0);
     assert_eq!(init["content"], "");
     assert_eq!(init["selfId"].as_str(), Some(a_id.as_str()));
+}
+
+#[tokio::test]
+async fn op_flood_closes_the_connection() {
+    // Sending far more than the 100 ops/s budget in a burst trips the
+    // per-connection token bucket (spec §6.6); the server closes the socket.
+    let state = AppState::default();
+    let doc_id = state.registry.create();
+    let addr = spawn_server(state).await;
+
+    let (mut a, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect a");
+    let _a_init = next_message(&mut a).await;
+
+    // Burst well past the 100-token capacity, faster than it refills. Once the
+    // guard trips, the server aborts the socket, so a send may itself fail —
+    // that is the closure we are testing for.
+    let mut closed = false;
+    for i in 0..300u64 {
+        let op = {
+            let mut op = OperationSeq::default();
+            op.insert("x");
+            op
+        };
+        let message = serde_json::json!({
+            "type": "op",
+            "baseRevision": 0,
+            "ops": serde_json::to_value(&op).expect("op json"),
+            "sentAt": i,
+        });
+        if a.send(Message::Text(message.to_string().into()))
+            .await
+            .is_err()
+        {
+            closed = true;
+            break;
+        }
+    }
+
+    // If sends all succeeded, drain responses until the stream ends. A bound
+    // stops the test if the guard somehow failed to fire.
+    if !closed {
+        for _ in 0..1000 {
+            match timeout(Duration::from_secs(5), a.next()).await {
+                Ok(Some(Ok(Message::Close(_)))) | Ok(Some(Err(_))) | Ok(None) => {
+                    closed = true;
+                    break;
+                }
+                Ok(Some(Ok(_))) => continue,
+                Err(_) => panic!("connection neither closed nor produced frames in time"),
+            }
+        }
+    }
+    assert!(closed, "flood should have closed the connection");
 }
 
 #[tokio::test]

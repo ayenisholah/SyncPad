@@ -11,6 +11,14 @@ release.
 
 ### Added
 
+- Document lifecycle limits (FR8, NFR6): an idle-document reaper drops
+  in-memory documents with no connections after a configurable TTL (default
+  24 h) and deletes their snapshots, along with orphan snapshot files older
+  than the TTL by file mtime, keeping memory and disk bounded. Per-connection
+  abuse guards cap message size at 64 KB, throttle operations with a 100 ops/s
+  token bucket (a flood closes the connection), and limit each client IP to 10
+  concurrently open documents. The TTL and reaper interval are configurable via
+  `SYNCPAD_DOC_TTL_SECS` and `SYNCPAD_REAP_SECS`.
 - Document snapshots (FR9): dirty documents are written to
   `data/<docId>.json` (content, revision, language, updated-at) every 30 s and
   flushed on graceful shutdown, using an atomic temp-file-plus-rename write.

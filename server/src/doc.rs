@@ -8,6 +8,7 @@
 //! the replay window, acks, and recovery.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use operational_transform::OperationSeq;
 use rand::Rng;
@@ -101,6 +102,10 @@ enum DocCommand {
     Snapshot {
         reply: oneshot::Sender<Option<Snapshot>>,
     },
+    Reap {
+        idle_after: Duration,
+        reply: oneshot::Sender<bool>,
+    },
 }
 
 /// Cheap-to-clone handle for sending commands to a document task.
@@ -151,6 +156,22 @@ impl DocHandle {
         self.tx.send(DocCommand::Snapshot { reply }).await.ok()?;
         response.await.ok().flatten()
     }
+
+    /// Whether the document is idle enough to expire (spec FR8): no connected
+    /// participants and no activity within `idle_after`. A task that is already
+    /// gone answers `false` — there is nothing to reap.
+    pub async fn should_reap(&self, idle_after: Duration) -> bool {
+        let (reply, response) = oneshot::channel();
+        if self
+            .tx
+            .send(DocCommand::Reap { idle_after, reply })
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        response.await.unwrap_or(false)
+    }
 }
 
 /// Spawn the task owning one document and return its handle. The task ends
@@ -176,10 +197,14 @@ async fn run(
     // Set on every accepted op; cleared when a snapshot is taken. A hydrated
     // document starts clean — its content already matches its snapshot.
     let mut dirty = false;
+    // Last real interaction (join/leave/accepted op), for the idle reaper
+    // (spec FR8). Snapshot and reap polls do not count as activity.
+    let mut last_active = Instant::now();
 
     while let Some(command) = commands.recv().await {
         match command {
             DocCommand::Join { reply } => {
+                last_active = Instant::now();
                 let self_id = random_id(16);
                 let participant = Participant {
                     id: self_id.clone(),
@@ -207,6 +232,7 @@ async fn run(
                 let _ = reply.send(joined);
             }
             DocCommand::Leave { conn_id } => {
+                last_active = Instant::now();
                 if presence.remove(&conn_id).is_some() {
                     let _ = events.send(Envelope {
                         recipients: Recipients::All,
@@ -234,7 +260,12 @@ async fn run(
                     sent_at,
                 ) {
                     dirty = true;
+                    last_active = Instant::now();
                 }
+            }
+            DocCommand::Reap { idle_after, reply } => {
+                let idle = presence.is_empty() && last_active.elapsed() >= idle_after;
+                let _ = reply.send(idle);
             }
             DocCommand::Snapshot { reply } => {
                 let snapshot = if dirty {
@@ -719,6 +750,29 @@ mod tests {
         let late = handle.join().await.expect("late join");
         assert_eq!(late.content, "abc");
         assert_eq!(late.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_document_is_reapable_but_a_joined_one_is_not() {
+        let handle = spawn(Doc::default());
+
+        // No connections yet: idle regardless of the window.
+        assert!(handle.should_reap(Duration::ZERO).await);
+
+        let joined = handle.join().await.expect("join");
+        // A live participant is never reaped, even at a zero idle window.
+        assert!(!handle.should_reap(Duration::ZERO).await);
+
+        // After the participant leaves it becomes reapable again.
+        handle.leave(joined.self_id).await;
+        assert!(handle.should_reap(Duration::ZERO).await);
+    }
+
+    #[tokio::test]
+    async fn recent_activity_defers_reaping() {
+        let handle = spawn(Doc::default());
+        // Just spawned: not idle for a full second yet.
+        assert!(!handle.should_reap(Duration::from_secs(1)).await);
     }
 
     #[test]

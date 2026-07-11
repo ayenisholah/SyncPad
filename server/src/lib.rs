@@ -2,15 +2,17 @@
 //! and static serving of the built frontend.
 
 pub mod doc;
+pub mod limits;
 pub mod protocol;
 pub mod registry;
 pub mod snapshot;
 
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -20,6 +22,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::doc::{DocHandle, Joined, Recipients};
+use crate::limits::{IpLimiter, TokenBucket};
 use crate::protocol::{ClientMessage, ServerMessage};
 use crate::registry::Registry;
 
@@ -27,6 +30,7 @@ use crate::registry::Registry;
 #[derive(Clone, Default)]
 pub struct AppState {
     pub registry: Arc<Registry>,
+    pub limiter: Arc<IpLimiter>,
 }
 
 #[derive(Serialize)]
@@ -58,12 +62,24 @@ async fn create_doc(State(state): State<AppState>) -> Json<CreateDocResponse> {
 async fn ws_upgrade(
     Path(doc_id): Path<String>,
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, doc_id, state))
+    // Cap message size at the protocol layer (spec §6.6); oversized frames
+    // close the socket.
+    let ws = ws.max_message_size(limits::MAX_MESSAGE_BYTES);
+    let peer_ip = peer.ip();
+    ws.on_upgrade(move |socket| handle_socket(socket, doc_id, state, peer_ip))
 }
 
-async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState) {
+async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState, peer_ip: IpAddr) {
+    // Hold a per-IP slot for the connection's lifetime (spec §6.6). Refusing
+    // here closes the socket before any document work happens.
+    let Some(_ip_guard) = state.limiter.try_acquire(peer_ip, &doc_id) else {
+        tracing::warn!(%peer_ip, doc_id, "per-IP document cap reached; refusing connection");
+        return;
+    };
+
     let handle = state.registry.handle(&doc_id).await;
     let Some(joined) = handle.join().await else {
         tracing::warn!(doc_id, "document task unavailable; closing connection");
@@ -144,6 +160,11 @@ async fn run_connection(socket: WebSocket, handle: DocHandle, joined: Joined) {
         }
     });
 
+    // Per-connection op-rate guard (spec §6.6). A well-behaved client keeps one
+    // op in flight, so exceeding this means a broken or hostile peer; we close
+    // the connection and let it reconnect + resync.
+    let mut op_budget = TokenBucket::ops();
+
     loop {
         tokio::select! {
             _ = &mut writer => break,
@@ -155,6 +176,10 @@ async fn run_connection(socket: WebSocket, handle: DocHandle, joined: Joined) {
                             ops,
                             sent_at,
                         }) => {
+                            if !op_budget.try_take() {
+                                tracing::warn!(self_id, "op rate exceeded; closing connection");
+                                break;
+                            }
                             handle.op(self_id.clone(), base_revision, ops, sent_at).await;
                         }
                         // cursor/setLanguage/ping handling arrives with
