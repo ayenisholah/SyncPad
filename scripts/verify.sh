@@ -8,6 +8,12 @@ if ! command -v cargo >/dev/null 2>&1 && [ -x "$HOME/.cargo/bin/cargo" ]; then
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
+# The windows-gnu toolchain needs binutils (as/dlltool) to build import
+# libraries for crates using raw-dylib; fall back to an MSYS2 install.
+if ! command -v dlltool >/dev/null 2>&1 && [ -d /c/msys64/mingw64/bin ]; then
+  export PATH="$PATH:/c/msys64/mingw64/bin"
+fi
+
 if [ -f Cargo.toml ]; then
   echo "== server: cargo fmt --check"
   cargo fmt --all --check

@@ -10,6 +10,14 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     }
 }
 
+# The windows-gnu toolchain needs binutils (as/dlltool) to build import
+# libraries for crates using raw-dylib; fall back to an MSYS2 install.
+if (-not (Get-Command dlltool -ErrorAction SilentlyContinue)) {
+    if (Test-Path "C:\msys64\mingw64\bin") {
+        $env:Path = "$env:Path;C:\msys64\mingw64\bin"
+    }
+}
+
 function Invoke-Step([string]$Name, [scriptblock]$Step) {
     Write-Host "== $Name"
     & $Step
