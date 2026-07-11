@@ -73,8 +73,31 @@ async fn main() {
     snapshot::flush_all(&registry, registry.data_dir()).await;
 }
 
+/// Resolve when the process is asked to stop: Ctrl-C anywhere, or SIGTERM on
+/// unix (how `docker stop` and service managers signal shutdown, spec §12).
 async fn shutdown_signal() {
-    if tokio::signal::ctrl_c().await.is_ok() {
-        tracing::info!("shutdown signal received");
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
     }
+    tracing::info!("shutdown signal received");
 }

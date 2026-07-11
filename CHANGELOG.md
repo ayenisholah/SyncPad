@@ -11,6 +11,12 @@ release.
 
 ### Added
 
+- Deployment (§12): a multi-stage `Dockerfile` builds the frontend and server
+  into a small distroless image that serves the SPA, API, and WebSocket from one
+  origin, run via `deploy/docker-compose.yml` behind an nginx reverse proxy
+  (config and setup in `deploy/`). The server now shuts down gracefully on
+  SIGTERM (flushing snapshots), and resolves the real client IP from a
+  forwarded header so the per-connection limits stay per-user behind the proxy.
 - Editor chrome (FR7, G3, G5, §8.1): a language picker in the top bar changes
   syntax highlighting for every window (server-validated against an allowlist,
   broadcast to all, and persisted in the snapshot), a presence bar shows who

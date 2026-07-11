@@ -1,0 +1,17 @@
+# Build artifacts and dependencies are rebuilt inside the image.
+target/
+**/node_modules/
+web/dist/
+
+# Runtime and test output.
+data/
+test-results/
+playwright-report/
+**/playwright/.cache/
+
+# VCS and editor noise.
+.git/
+.github/
+*.log
+.DS_Store
+Thumbs.db

@@ -33,7 +33,7 @@ Next up: snapshots and document lifecycle, then the editor frontend.
 | Live cursors, selections, presence list | Planned |
 | Language picker | Planned |
 | Latency instrumentation (status-bar p50) | Planned |
-| Deployment (Docker, single instance) | Planned |
+| Deployment (Docker, single instance) | In progress |
 
 No performance numbers are claimed until they are measured and committed with
 the measurement methodology.
@@ -106,6 +106,23 @@ Run the server and frontend during development:
 cargo run -p syncpad-server        # server on http://127.0.0.1:8090
 cd web && npm run dev              # Vite dev server proxying /api and /ws
 ```
+
+## Deployment
+
+SyncPad ships as a single container behind a reverse proxy — in-memory documents
+pin a document to one process, so it runs as one instance by design. A
+multi-stage `Dockerfile` builds the frontend and the server into a small
+distroless image that serves the SPA, the API, and the WebSocket from one
+origin.
+
+```sh
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+The container listens on `127.0.0.1:8090` with a volume for `/data` (the
+snapshots); an nginx server block fronts it. A graceful stop (SIGTERM) flushes
+dirty documents before exit. See [deploy/README.md](deploy/README.md) for the
+full VPS setup, including the nginx config and TLS.
 
 ## Roadmap
 

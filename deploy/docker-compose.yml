@@ -1,0 +1,24 @@
+# SyncPad — single instance by design (in-memory documents pin a document to
+# one process; horizontal scaling would need document-affinity routing, spec
+# §12). Published to host loopback only; nginx terminates the public traffic.
+
+services:
+  syncpad:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: syncpad:latest
+    container_name: syncpad
+    restart: unless-stopped
+    # Give the SIGTERM snapshot flush time to finish before the kill.
+    stop_grace_period: 10s
+    environment:
+      PORT: "8090"
+    # Loopback only: reachable through the host's nginx, never directly.
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - syncpad-data:/data
+
+volumes:
+  syncpad-data:

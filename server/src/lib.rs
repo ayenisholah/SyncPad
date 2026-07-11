@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path, State};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -63,13 +64,32 @@ async fn ws_upgrade(
     Path(doc_id): Path<String>,
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     // Cap message size at the protocol layer (spec §6.6); oversized frames
     // close the socket.
     let ws = ws.max_message_size(limits::MAX_MESSAGE_BYTES);
-    let peer_ip = peer.ip();
-    ws.on_upgrade(move |socket| handle_socket(socket, doc_id, state, peer_ip))
+    let client_ip = client_ip(&headers, peer);
+    ws.on_upgrade(move |socket| handle_socket(socket, doc_id, state, client_ip))
+}
+
+/// The client's IP for the per-IP cap (spec §6.6). Behind our reverse proxy the
+/// socket peer is the proxy, so prefer the `X-Real-IP` / `X-Forwarded-For`
+/// header it sets; fall back to the direct peer when there is no proxy (dev,
+/// tests). The container is bound to loopback and only reachable through the
+/// proxy, so trusting the header here is safe for this light abuse guard.
+fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> IpAddr {
+    let from_header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(',').next())
+            .and_then(|value| value.trim().parse::<IpAddr>().ok())
+    };
+    from_header("x-real-ip")
+        .or_else(|| from_header("x-forwarded-for"))
+        .unwrap_or_else(|| peer.ip())
 }
 
 async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState, peer_ip: IpAddr) {

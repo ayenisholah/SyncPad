@@ -53,6 +53,25 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
   machine mirrors the ot.js semantics in TypeScript and is unit-tested
   transition by transition.
 
+## D-006: Single-instance container behind an nginx reverse proxy
+
+- Date: 2026-07-12 · Status: Approved · Decider: Shola Ayeni
+- Context: the in-memory + snapshot design pins each document to one process, so
+  the deployment is a single stateful-ish instance (horizontal scaling would
+  need document-affinity routing — future work). A host to run it on and a way
+  to terminate TLS and upgrade WebSockets are needed.
+- Decision: ship a multi-stage Docker image (frontend build → server build →
+  distroless runtime) run via Docker Compose on a VPS, bound to host loopback,
+  with a named volume for `/data`. A host nginx server block reverse-proxies the
+  public subdomain to it, forwarding the client IP (`X-Real-IP`) so the
+  per-connection limits remain per-user, and passing the WebSocket upgrade. TLS
+  is added with certbot; HTTP is used until then. nginx is chosen over the
+  spec's Caddy example because the host already runs nginx.
+- Consequences: one image, one process, one volume — simple to operate and to
+  reason about. The server trusts a forwarded-IP header, which is safe only
+  because the container is not publicly bound and is reachable solely through
+  the proxy. Multi-region or high-availability deployment is out of scope.
+
 ## D-005: Client operation algebra — minimal TypeScript port now
 
 - Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni
