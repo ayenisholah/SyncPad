@@ -1,13 +1,16 @@
 //! WebSocket-level tests: connecting to `/ws/:docId` yields the `init`
-//! message with the document's current state (spec FR2), and peers observe
-//! presence joins and leaves (spec FR6).
+//! message with the document's current state (spec FR2), peers observe
+//! presence joins and leaves (spec FR6), and concurrent edits are
+//! transformed so all clients converge (spec FR3).
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
+use operational_transform::OperationSeq;
 use syncpad_server::{AppState, app};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 type Client = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -30,6 +33,33 @@ async fn next_message(ws: &mut Client) -> serde_json::Value {
         .expect("open stream")
         .expect("frame");
     serde_json::from_str(frame.to_text().expect("text frame")).expect("json")
+}
+
+/// Send an `op` message built with the crate's own serialization.
+async fn send_op(
+    ws: &mut Client,
+    base_revision: u64,
+    sent_at: u64,
+    build: impl FnOnce(&mut OperationSeq),
+) {
+    let mut op = OperationSeq::default();
+    build(&mut op);
+    let message = serde_json::json!({
+        "type": "op",
+        "baseRevision": base_revision,
+        "ops": serde_json::to_value(&op).expect("op json"),
+        "sentAt": sent_at,
+    });
+    ws.send(Message::Text(message.to_string().into()))
+        .await
+        .expect("send op");
+}
+
+/// Apply a received `op` message's ops to a local view of the content.
+fn apply_ops(message: &serde_json::Value, view: &str) -> String {
+    let op: OperationSeq =
+        serde_json::from_value(message["ops"].clone()).expect("received ops parse");
+    op.apply(view).expect("received ops apply")
 }
 
 #[tokio::test]
@@ -121,6 +151,117 @@ async fn peers_see_presence_join_and_leave() {
     assert_eq!(left["type"], "presence");
     assert_eq!(left["left"].as_str(), Some(b_id.as_str()));
     assert!(left.get("joined").is_none());
+}
+
+#[tokio::test]
+async fn edits_reach_peers_and_late_joiners() {
+    let state = AppState::default();
+    let doc_id = state.registry.create();
+    let addr = spawn_server(state).await;
+
+    let (mut a, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect a");
+    let a_init = next_message(&mut a).await;
+    let a_id = a_init["selfId"].as_str().expect("a selfId").to_string();
+
+    let (mut b, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect b");
+    let _b_init = next_message(&mut b).await;
+    let _b_joined = next_message(&mut a).await;
+
+    send_op(&mut a, 0, 7, |op| op.insert("hello")).await;
+
+    // The author gets exactly an ack; the peer gets the operation.
+    let ack = next_message(&mut a).await;
+    assert_eq!(ack["type"], "ack");
+    assert_eq!(ack["revision"], 1);
+
+    let op = next_message(&mut b).await;
+    assert_eq!(op["type"], "op");
+    assert_eq!(op["revision"], 1);
+    assert_eq!(op["authorId"].as_str(), Some(a_id.as_str()));
+    assert_eq!(op["sentAt"], 7);
+    assert_eq!(apply_ops(&op, ""), "hello");
+
+    // A late joiner sees the edited content at the current revision (FR2).
+    let (mut c, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect c");
+    let c_init = next_message(&mut c).await;
+    assert_eq!(c_init["type"], "init");
+    assert_eq!(c_init["revision"], 1);
+    assert_eq!(c_init["content"], "hello");
+}
+
+#[tokio::test]
+async fn stale_base_edits_are_transformed_to_convergence() {
+    let state = AppState::default();
+    let doc_id = state.registry.create();
+    let addr = spawn_server(state).await;
+
+    let (mut a, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect a");
+    let _a_init = next_message(&mut a).await;
+    let (mut b, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect b");
+    let _b_init = next_message(&mut b).await;
+    let _b_joined = next_message(&mut a).await;
+
+    // A establishes revision 1; B sees it.
+    send_op(&mut a, 0, 1, |op| op.insert("ab")).await;
+    let ack = next_message(&mut a).await;
+    assert_eq!(ack["revision"], 1);
+    let op_for_b = next_message(&mut b).await;
+    let mut a_view = String::from("ab");
+    assert_eq!(apply_ops(&op_for_b, ""), a_view);
+
+    // B now sends an operation still based on revision 0 — the server must
+    // transform it against A's concurrent edit instead of corrupting state.
+    send_op(&mut b, 0, 2, |op| op.insert("z")).await;
+    let ack = next_message(&mut b).await;
+    assert_eq!(ack["type"], "ack");
+    assert_eq!(ack["revision"], 2);
+
+    let transformed = next_message(&mut a).await;
+    assert_eq!(transformed["type"], "op");
+    assert_eq!(transformed["revision"], 2);
+    a_view = apply_ops(&transformed, &a_view);
+
+    // Everyone converges on the authoritative content.
+    let (mut c, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect c");
+    let c_init = next_message(&mut c).await;
+    assert_eq!(c_init["revision"], 2);
+    assert_eq!(c_init["content"].as_str(), Some(a_view.as_str()));
+}
+
+#[tokio::test]
+async fn out_of_window_ops_force_resync() {
+    let state = AppState::default();
+    let doc_id = state.registry.create();
+    let addr = spawn_server(state).await;
+
+    let (mut a, _) = connect_async(format!("ws://{addr}/ws/{doc_id}"))
+        .await
+        .expect("connect a");
+    let a_init = next_message(&mut a).await;
+    let a_id = a_init["selfId"].as_str().expect("a selfId").to_string();
+
+    send_op(&mut a, 99, 0, |op| op.insert("x")).await;
+
+    let resync = next_message(&mut a).await;
+    assert_eq!(resync["type"], "resync");
+
+    let init = next_message(&mut a).await;
+    assert_eq!(init["type"], "init");
+    assert_eq!(init["revision"], 0);
+    assert_eq!(init["content"], "");
+    assert_eq!(init["selfId"].as_str(), Some(a_id.as_str()));
 }
 
 #[tokio::test]
