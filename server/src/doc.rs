@@ -1,10 +1,15 @@
-//! Per-document task (spec §5.2, §6.6). Each live document is owned by one
-//! tokio task: connections send commands over an mpsc channel and receive
-//! events over a broadcast channel, so all document mutation is
-//! single-threaded with no locks around document state.
+//! Per-document task (spec §5.2, §6.1, §6.6). Each live document is owned
+//! by one tokio task: connections send commands over an mpsc channel and
+//! receive events over a broadcast channel, so all document mutation is
+//! single-threaded with no locks around OT state.
+//!
+//! The transform algebra comes from the `operational-transform` crate
+//! (D-003); this module owns the protocol around it — revision ordering,
+//! the replay window, acks, and recovery.
 
 use std::collections::HashMap;
 
+use operational_transform::OperationSeq;
 use rand::Rng;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -47,11 +52,21 @@ impl Default for Doc {
     }
 }
 
-/// A broadcast event, optionally excluding one connection (the author —
-/// senders never receive their own messages back).
-#[derive(Debug, Clone)]
+/// Who a broadcast event is for. Everything flows through the one broadcast
+/// channel — including single-recipient acks and resyncs — so every
+/// connection observes acks and ops in strict revision order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recipients {
+    All,
+    Except(String),
+    Only(String),
+}
+
+/// A broadcast event; the connection layer delivers it according to
+/// `recipients`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Envelope {
-    pub exclude: Option<String>,
+    pub recipients: Recipients,
     pub msg: ServerMessage,
 }
 
@@ -70,8 +85,18 @@ pub struct Joined {
 
 #[derive(Debug)]
 enum DocCommand {
-    Join { reply: oneshot::Sender<Joined> },
-    Leave { conn_id: String },
+    Join {
+        reply: oneshot::Sender<Joined>,
+    },
+    Leave {
+        conn_id: String,
+    },
+    Op {
+        conn_id: String,
+        base_revision: u64,
+        ops: serde_json::Value,
+        sent_at: u64,
+    },
 }
 
 /// Cheap-to-clone handle for sending commands to a document task.
@@ -92,6 +117,26 @@ impl DocHandle {
     pub async fn leave(&self, conn_id: String) {
         let _ = self.tx.send(DocCommand::Leave { conn_id }).await;
     }
+
+    /// Submit an operation based on `base_revision` (spec FR3). The outcome
+    /// arrives as an `ack` (accepted), or `resync` + `init` (rejected).
+    pub async fn op(
+        &self,
+        conn_id: String,
+        base_revision: u64,
+        ops: serde_json::Value,
+        sent_at: u64,
+    ) {
+        let _ = self
+            .tx
+            .send(DocCommand::Op {
+                conn_id,
+                base_revision,
+                ops,
+                sent_at,
+            })
+            .await;
+    }
 }
 
 /// Spawn the task owning one document and return its handle. The task ends
@@ -105,11 +150,15 @@ pub fn spawn(doc: Doc) -> DocHandle {
 }
 
 async fn run(
-    doc: Doc,
+    mut doc: Doc,
     mut commands: mpsc::Receiver<DocCommand>,
     events: broadcast::Sender<Envelope>,
 ) {
     let mut presence: HashMap<String, Participant> = HashMap::new();
+    // Ops accepted since spawn; snapshots will truncate this to a replay
+    // window (spec FR9/FR10). Entry i is the op that produced revision
+    // `log_start + i + 1`.
+    let mut log: Vec<OperationSeq> = Vec::new();
 
     while let Some(command) = commands.recv().await {
         match command {
@@ -132,7 +181,7 @@ async fn run(
 
                 presence.insert(self_id.clone(), participant.clone());
                 let _ = events.send(Envelope {
-                    exclude: Some(self_id),
+                    recipients: Recipients::Except(self_id),
                     msg: ServerMessage::Presence {
                         joined: Some(participant),
                         left: None,
@@ -143,7 +192,7 @@ async fn run(
             DocCommand::Leave { conn_id } => {
                 if presence.remove(&conn_id).is_some() {
                     let _ = events.send(Envelope {
-                        exclude: None,
+                        recipients: Recipients::All,
                         msg: ServerMessage::Presence {
                             joined: None,
                             left: Some(conn_id),
@@ -151,8 +200,132 @@ async fn run(
                     });
                 }
             }
+            DocCommand::Op {
+                conn_id,
+                base_revision,
+                ops,
+                sent_at,
+            } => {
+                handle_op(
+                    &mut doc,
+                    &mut log,
+                    &presence,
+                    &events,
+                    conn_id,
+                    base_revision,
+                    ops,
+                    sent_at,
+                );
+            }
         }
     }
+}
+
+/// The four-step op algorithm from spec §6.1: validate the replay window,
+/// transform against concurrent ops, apply, then ack and broadcast. Every
+/// rejection leaves the document untouched and forces the sender to resync.
+#[allow(clippy::too_many_arguments)]
+fn handle_op(
+    doc: &mut Doc,
+    log: &mut Vec<OperationSeq>,
+    presence: &HashMap<String, Participant>,
+    events: &broadcast::Sender<Envelope>,
+    conn_id: String,
+    base_revision: u64,
+    ops: serde_json::Value,
+    sent_at: u64,
+) {
+    let log_start = doc.revision - log.len() as u64;
+    if base_revision > doc.revision || base_revision < log_start {
+        tracing::debug!(
+            conn_id,
+            base_revision,
+            revision = doc.revision,
+            log_start,
+            "op outside the replay window; forcing resync"
+        );
+        resync(doc, presence, events, &conn_id);
+        return;
+    }
+
+    let Ok(mut operation) = serde_json::from_value::<OperationSeq>(ops) else {
+        tracing::debug!(conn_id, "unparseable operation; forcing resync");
+        resync(doc, presence, events, &conn_id);
+        return;
+    };
+
+    for concurrent in &log[(base_revision - log_start) as usize..] {
+        match operation.transform(concurrent) {
+            Ok((client_prime, _)) => operation = client_prime,
+            Err(error) => {
+                tracing::debug!(conn_id, %error, "transform failed; forcing resync");
+                resync(doc, presence, events, &conn_id);
+                return;
+            }
+        }
+    }
+
+    let content = match operation.apply(&doc.content) {
+        Ok(content) => content,
+        Err(error) => {
+            // A mismatched operation means a broken client; the document
+            // must never be corrupted on its behalf.
+            tracing::debug!(conn_id, %error, "apply failed; forcing resync");
+            resync(doc, presence, events, &conn_id);
+            return;
+        }
+    };
+
+    doc.content = content;
+    log.push(operation.clone());
+    doc.revision += 1;
+
+    let Ok(ops_json) = serde_json::to_value(&operation) else {
+        return;
+    };
+    let _ = events.send(Envelope {
+        recipients: Recipients::Only(conn_id.clone()),
+        msg: ServerMessage::Ack {
+            revision: doc.revision,
+        },
+    });
+    let _ = events.send(Envelope {
+        recipients: Recipients::Except(conn_id.clone()),
+        msg: ServerMessage::Op {
+            revision: doc.revision,
+            ops: ops_json,
+            author_id: conn_id,
+            sent_at,
+        },
+    });
+}
+
+/// Recovery path (spec §6.2): tell one connection to drop its state, then
+/// hand it a fresh `init` with the authoritative document.
+fn resync(
+    doc: &Doc,
+    presence: &HashMap<String, Participant>,
+    events: &broadcast::Sender<Envelope>,
+    conn_id: &str,
+) {
+    let _ = events.send(Envelope {
+        recipients: Recipients::Only(conn_id.to_string()),
+        msg: ServerMessage::Resync,
+    });
+    let _ = events.send(Envelope {
+        recipients: Recipients::Only(conn_id.to_string()),
+        msg: ServerMessage::Init {
+            revision: doc.revision,
+            content: doc.content.clone(),
+            language: doc.language.clone(),
+            participants: presence
+                .values()
+                .filter(|p| p.id != conn_id)
+                .cloned()
+                .collect(),
+            self_id: conn_id.to_string(),
+        },
+    });
 }
 
 /// Random adjective-animal name, retrying a few times to keep names unique
@@ -193,6 +366,24 @@ mod tests {
         })
     }
 
+    fn op_json(build: impl FnOnce(&mut OperationSeq)) -> serde_json::Value {
+        let mut op = OperationSeq::default();
+        build(&mut op);
+        serde_json::to_value(&op).expect("op json")
+    }
+
+    /// Apply a broadcast `op` message to a client-side view of the content.
+    fn apply_broadcast(msg: &ServerMessage, view: &str) -> String {
+        match msg {
+            ServerMessage::Op { ops, .. } => {
+                let op: OperationSeq =
+                    serde_json::from_value(ops.clone()).expect("broadcast op parses");
+                op.apply(view).expect("broadcast op applies")
+            }
+            other => panic!("expected op broadcast, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn first_join_sees_fresh_doc_and_empty_roster() {
         let handle = spawn(Doc::default());
@@ -225,14 +416,14 @@ mod tests {
         let handle = spawn(Doc::default());
         let mut first = handle.join().await.expect("first join");
 
-        // The joiner's own event is delivered but marked excluded — the
-        // connection layer uses that to avoid echoing to the author.
+        // The joiner's own event is delivered but addressed away from it —
+        // the connection layer uses that to avoid echoing to the author.
         let own = first.events.recv().await.expect("own join event");
-        assert_eq!(own.exclude.as_deref(), Some(first.self_id.as_str()));
+        assert_eq!(own.recipients, Recipients::Except(first.self_id.clone()));
 
         let second = handle.join().await.expect("second join");
         let event = first.events.recv().await.expect("peer join event");
-        assert_eq!(event.exclude.as_deref(), Some(second.self_id.as_str()));
+        assert_eq!(event.recipients, Recipients::Except(second.self_id.clone()));
         match event.msg {
             ServerMessage::Presence {
                 joined: Some(participant),
@@ -243,7 +434,7 @@ mod tests {
 
         handle.leave(second.self_id.clone()).await;
         let event = first.events.recv().await.expect("leave event");
-        assert_eq!(event.exclude, None);
+        assert_eq!(event.recipients, Recipients::All);
         match event.msg {
             ServerMessage::Presence {
                 joined: None,
@@ -276,6 +467,215 @@ mod tests {
             first.events.try_recv(),
             Err(broadcast::error::TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test]
+    async fn accepted_op_acks_sender_and_broadcasts_to_peers() {
+        let handle = spawn(Doc::default());
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+        let b = handle.join().await.expect("join b");
+        let _ = a.events.recv().await.expect("b join");
+
+        handle
+            .op(a.self_id.clone(), 0, op_json(|op| op.insert("hello")), 123)
+            .await;
+
+        let ack = a.events.recv().await.expect("ack envelope");
+        assert_eq!(ack.recipients, Recipients::Only(a.self_id.clone()));
+        assert_eq!(ack.msg, ServerMessage::Ack { revision: 1 });
+
+        let broadcast = a.events.recv().await.expect("op envelope");
+        assert_eq!(broadcast.recipients, Recipients::Except(a.self_id.clone()));
+        match &broadcast.msg {
+            ServerMessage::Op {
+                revision,
+                author_id,
+                sent_at,
+                ..
+            } => {
+                assert_eq!(*revision, 1);
+                assert_eq!(author_id, &a.self_id);
+                assert_eq!(*sent_at, 123);
+            }
+            other => panic!("expected op broadcast, got {other:?}"),
+        }
+        assert_eq!(apply_broadcast(&broadcast.msg, ""), "hello");
+
+        // The authoritative state moved; b was a bystander.
+        drop(b);
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.content, "hello");
+        assert_eq!(late.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_ops_converge_through_transform() {
+        let handle = spawn(Doc {
+            content: "ab".to_string(),
+            revision: 0,
+            language: "plaintext".to_string(),
+        });
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+        let b = handle.join().await.expect("join b");
+        let _ = a.events.recv().await.expect("b join");
+
+        // A inserts "x" at offset 0; B concurrently (same base revision)
+        // inserts "y" at offset 2. Neither has seen the other's edit.
+        handle
+            .op(
+                a.self_id.clone(),
+                0,
+                op_json(|op| {
+                    op.insert("x");
+                    op.retain(2);
+                }),
+                1,
+            )
+            .await;
+        handle
+            .op(
+                b.self_id.clone(),
+                0,
+                op_json(|op| {
+                    op.retain(2);
+                    op.insert("y");
+                }),
+                2,
+            )
+            .await;
+
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.content, "xaby");
+        assert_eq!(late.revision, 2);
+
+        // TP1 sanity: A's view after its ack is "xab"; applying the
+        // transformed broadcast of B's op must reach the same content the
+        // server holds.
+        let _ack_a = a.events.recv().await.expect("ack for a");
+        let _op_a = a.events.recv().await.expect("a's own broadcast");
+        let _ack_b = a.events.recv().await.expect("ack for b");
+        let b_broadcast = a.events.recv().await.expect("b's broadcast");
+        assert_eq!(
+            b_broadcast.recipients,
+            Recipients::Except(b.self_id.clone())
+        );
+        assert_eq!(apply_broadcast(&b_broadcast.msg, "xab"), late.content);
+    }
+
+    #[tokio::test]
+    async fn op_from_the_future_forces_resync_without_mutation() {
+        let handle = spawn(Doc::default());
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+
+        handle
+            .op(a.self_id.clone(), 5, op_json(|op| op.insert("x")), 0)
+            .await;
+
+        let resync = a.events.recv().await.expect("resync envelope");
+        assert_eq!(resync.recipients, Recipients::Only(a.self_id.clone()));
+        assert_eq!(resync.msg, ServerMessage::Resync);
+
+        let init = a.events.recv().await.expect("init envelope");
+        assert_eq!(init.recipients, Recipients::Only(a.self_id.clone()));
+        match init.msg {
+            ServerMessage::Init {
+                revision, content, ..
+            } => {
+                assert_eq!(revision, 0);
+                assert_eq!(content, "");
+            }
+            other => panic!("expected init, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn op_below_the_replay_window_forces_resync() {
+        // A document hydrated at revision 5 with an empty log has a replay
+        // window starting at 5 — exactly the shape snapshots will produce.
+        let handle = spawn(Doc {
+            content: "abc".to_string(),
+            revision: 5,
+            language: "plaintext".to_string(),
+        });
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+
+        handle
+            .op(
+                a.self_id.clone(),
+                3,
+                op_json(|op| {
+                    op.retain(3);
+                    op.insert("!");
+                }),
+                0,
+            )
+            .await;
+
+        let resync = a.events.recv().await.expect("resync envelope");
+        assert_eq!(resync.msg, ServerMessage::Resync);
+        let init = a.events.recv().await.expect("init envelope");
+        match init.msg {
+            ServerMessage::Init {
+                revision, content, ..
+            } => {
+                assert_eq!(revision, 5);
+                assert_eq!(content, "abc");
+            }
+            other => panic!("expected init, got {other:?}"),
+        }
+
+        // The window start itself is still accepted.
+        handle
+            .op(
+                a.self_id.clone(),
+                5,
+                op_json(|op| {
+                    op.retain(3);
+                    op.insert("!");
+                }),
+                0,
+            )
+            .await;
+        let ack = a.events.recv().await.expect("ack envelope");
+        assert_eq!(ack.msg, ServerMessage::Ack { revision: 6 });
+
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.content, "abc!");
+    }
+
+    #[tokio::test]
+    async fn broken_ops_are_rejected_without_corrupting_the_doc() {
+        let handle = spawn(Doc {
+            content: "abc".to_string(),
+            revision: 0,
+            language: "plaintext".to_string(),
+        });
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+
+        // Not an operation at all.
+        handle
+            .op(a.self_id.clone(), 0, serde_json::json!({ "nope": true }), 0)
+            .await;
+        let resync = a.events.recv().await.expect("resync envelope");
+        assert_eq!(resync.msg, ServerMessage::Resync);
+        let _init = a.events.recv().await.expect("init envelope");
+
+        // Structurally valid but with the wrong base length.
+        handle
+            .op(a.self_id.clone(), 0, op_json(|op| op.retain(10)), 0)
+            .await;
+        let resync = a.events.recv().await.expect("resync envelope");
+        assert_eq!(resync.msg, ServerMessage::Resync);
+        let _init = a.events.recv().await.expect("init envelope");
+
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.content, "abc");
+        assert_eq!(late.revision, 0);
     }
 
     #[test]

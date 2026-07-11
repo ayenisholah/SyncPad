@@ -11,6 +11,8 @@ publish = false
 axum = { version = "0.8", features = ["ws"] }
 dashmap = "6"
 futures-util = "0.3"
+# Pinned exactly: the OT algebra is the correctness core (see D-003).
+operational-transform = { version = "=0.6.1", features = ["serde"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

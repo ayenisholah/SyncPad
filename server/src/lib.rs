@@ -18,7 +18,7 @@ use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::doc::Joined;
+use crate::doc::{DocHandle, Joined, Recipients};
 use crate::protocol::{ClientMessage, ServerMessage};
 use crate::registry::Registry;
 
@@ -71,7 +71,7 @@ async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState) {
     let self_id = joined.self_id.clone();
     tracing::debug!(doc_id, self_id, "connection joined");
 
-    run_connection(socket, joined).await;
+    run_connection(socket, handle.clone(), joined).await;
 
     handle.leave(self_id.clone()).await;
     tracing::debug!(doc_id, self_id, "connection closed");
@@ -80,7 +80,7 @@ async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState) {
 /// Drive one connection: send `init`, then forward document events to the
 /// socket from a writer task while reading client frames until the peer
 /// goes away (spec §6.6).
-async fn run_connection(socket: WebSocket, joined: Joined) {
+async fn run_connection(socket: WebSocket, handle: DocHandle, joined: Joined) {
     let Joined {
         self_id,
         revision,
@@ -106,11 +106,17 @@ async fn run_connection(socket: WebSocket, joined: Joined) {
         return;
     }
 
+    let writer_id = self_id.clone();
     let mut writer = tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(envelope) => {
-                    if envelope.exclude.as_deref() == Some(self_id.as_str()) {
+                    let deliver = match &envelope.recipients {
+                        Recipients::All => true,
+                        Recipients::Except(id) => *id != writer_id,
+                        Recipients::Only(id) => *id == writer_id,
+                    };
+                    if !deliver {
                         continue;
                     }
                     let Ok(text) = serde_json::to_string(&envelope.msg) else {
@@ -143,7 +149,14 @@ async fn run_connection(socket: WebSocket, joined: Joined) {
             frame = stream.next() => match frame {
                 Some(Ok(Message::Text(text))) => {
                     match serde_json::from_str::<ClientMessage>(text.as_str()) {
-                        // op/cursor/setLanguage/ping handling arrives with
+                        Ok(ClientMessage::Op {
+                            base_revision,
+                            ops,
+                            sent_at,
+                        }) => {
+                            handle.op(self_id.clone(), base_revision, ops, sent_at).await;
+                        }
+                        // cursor/setLanguage/ping handling arrives with
                         // their features; valid messages are not an error.
                         Ok(message) => {
                             tracing::debug!(?message, "client message not handled yet");
