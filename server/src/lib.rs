@@ -188,8 +188,11 @@ async fn run_connection(socket: WebSocket, handle: DocHandle, joined: Joined) {
                         }) => {
                             handle.cursor(self_id.clone(), position, selection).await;
                         }
-                        // setLanguage/ping handling arrives with their
-                        // features; valid messages are not an error.
+                        Ok(ClientMessage::SetLanguage { language }) => {
+                            handle.set_language(language).await;
+                        }
+                        // ping handling arrives with the latency feature; valid
+                        // messages are not an error.
                         Ok(message) => {
                             tracing::debug!(?message, "client message not handled yet");
                         }

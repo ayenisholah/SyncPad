@@ -11,6 +11,11 @@ release.
 
 ### Added
 
+- Editor chrome (FR7, G3, G5, §8.1): a language picker in the top bar changes
+  syntax highlighting for every window (server-validated against an allowlist,
+  broadcast to all, and persisted in the snapshot), a presence bar shows who
+  else is in the document as colored avatars, and the status bar shows the live
+  op→apply latency alongside the connection state and revision.
 - Live remote cursors and selections (FR5): each participant's caret and
   selection appear in every other editor, colored and name-tagged. The server
   tracks each cursor and transforms it through every accepted operation so it

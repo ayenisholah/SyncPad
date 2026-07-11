@@ -12,12 +12,37 @@ import { RemoteCursors } from "./cursors";
 
 /** Throttle interval for outgoing cursor updates (spec §6.2). */
 const CURSOR_THROTTLE_MS = 50;
+/** How often the status bar refreshes revision + latency. */
+const STATUS_POLL_MS = 500;
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: "connecting…",
   open: "connected",
   closed: "reconnecting…",
 };
+
+/** Language picker options; ids must match the server allowlist (spec FR7). */
+const LANGUAGES: { id: string; label: string }[] = [
+  { id: "plaintext", label: "Plain text" },
+  { id: "javascript", label: "JavaScript" },
+  { id: "typescript", label: "TypeScript" },
+  { id: "python", label: "Python" },
+  { id: "rust", label: "Rust" },
+  { id: "go", label: "Go" },
+  { id: "java", label: "Java" },
+  { id: "c", label: "C" },
+  { id: "cpp", label: "C++" },
+  { id: "csharp", label: "C#" },
+  { id: "json", label: "JSON" },
+  { id: "yaml", label: "YAML" },
+  { id: "markdown", label: "Markdown" },
+  { id: "html", label: "HTML" },
+  { id: "css", label: "CSS" },
+  { id: "sql", label: "SQL" },
+  { id: "shell", label: "Shell" },
+  { id: "ruby", label: "Ruby" },
+  { id: "php", label: "PHP" },
+];
 
 /** Monaco range covering a UTF-16 [offset, offset+length) span. */
 function spanToRange(
@@ -55,6 +80,9 @@ export function Editor({ docId }: { docId: string }) {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [language, setLanguage] = useState("plaintext");
   const [copied, setCopied] = useState(false);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [revision, setRevision] = useState(0);
+  const [latency, setLatency] = useState<number | null>(null);
 
   const seedContent = useCallback((content: string) => {
     const model = editorRef.current?.getModel();
@@ -92,6 +120,7 @@ export function Editor({ docId }: { docId: string }) {
   }, []);
 
   useEffect(() => {
+    const syncRoster = () => setParticipants([...participantsRef.current.values()]);
     const connection = new Connection(docSocketUrl(docId), {
       onInit: (state) => {
         seedContent(state.content);
@@ -99,6 +128,7 @@ export function Editor({ docId }: { docId: string }) {
         selfIdRef.current = state.selfId;
         participantsRef.current = new Map(state.participants.map((p) => [p.id, p]));
         remoteCursorsRef.current?.clear();
+        syncRoster();
       },
       onApplyOperation: applyRemote,
       onPresence: (joined, left) => {
@@ -107,6 +137,7 @@ export function Editor({ docId }: { docId: string }) {
           participantsRef.current.delete(left);
           remoteCursorsRef.current?.remove(left);
         }
+        syncRoster();
       },
       onCursor: (authorId, position, selection) => {
         if (authorId === selfIdRef.current) return;
@@ -114,6 +145,7 @@ export function Editor({ docId }: { docId: string }) {
         if (!peer) return;
         remoteCursorsRef.current?.set(authorId, peer.name, peer.color, position, selection);
       },
+      onLanguage: setLanguage,
       onStatus: setStatus,
     });
     connectionRef.current = connection;
@@ -124,6 +156,22 @@ export function Editor({ docId }: { docId: string }) {
       remoteCursorsRef.current = null;
     };
   }, [docId, applyRemote, seedContent]);
+
+  // Poll the live status readout (revision + rolling op→apply latency, spec §8.1).
+  useEffect(() => {
+    const id = setInterval(() => {
+      const connection = connectionRef.current;
+      if (!connection) return;
+      setRevision(connection.revision);
+      setLatency(connection.latencyP50());
+    }, STATUS_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  const changeLanguage = (next: string) => {
+    setLanguage(next);
+    connectionRef.current?.sendLanguage(next);
+  };
 
   const handleMount: OnMount = (editor, monacoApi) => {
     editorRef.current = editor;
@@ -199,7 +247,33 @@ export function Editor({ docId }: { docId: string }) {
           {copied ? "copied" : "copy link"}
         </button>
         <span className="spacer" />
-        <span className="lang-tag">{language}</span>
+        <div className="presence" title="People in this document">
+          <span className="avatar avatar-you" title="You">
+            you
+          </span>
+          {participants.map((p) => (
+            <span
+              key={p.id}
+              className="avatar"
+              style={{ background: p.color }}
+              title={p.name}
+            >
+              {p.name.slice(0, 1).toUpperCase()}
+            </span>
+          ))}
+        </div>
+        <select
+          className="lang-select"
+          value={language}
+          onChange={(e) => changeLanguage(e.target.value)}
+          aria-label="Language"
+        >
+          {LANGUAGES.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.label}
+            </option>
+          ))}
+        </select>
       </header>
       <div className="editor-main">
         <MonacoEditor
@@ -218,7 +292,13 @@ export function Editor({ docId }: { docId: string }) {
       </div>
       <footer className="editor-status">
         <span className={`status-dot status-${status}`} />
-        {STATUS_LABEL[status]}
+        <span>{STATUS_LABEL[status]}</span>
+        <span className="status-sep">·</span>
+        <span className="status-latency">
+          sync {latency === null ? "—" : `${latency} ms`}
+        </span>
+        <span className="status-sep">·</span>
+        <span className="status-rev">rev {revision}</span>
       </footer>
     </div>
   );

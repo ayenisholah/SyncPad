@@ -137,10 +137,44 @@ code {
   flex: 1;
 }
 
-.lang-tag {
-  color: var(--muted);
-  font-family: "JetBrains Mono", Consolas, monospace;
-  font-size: 0.75rem;
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #1e1e1e;
+  cursor: default;
+  user-select: none;
+}
+
+.avatar-you {
+  background: var(--accent);
+}
+
+.lang-select {
+  background: #252526;
+  color: var(--fg);
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.lang-select:hover {
+  border-color: var(--accent);
 }
 
 .editor-main {
@@ -157,6 +191,14 @@ code {
   color: var(--muted);
   font-family: "JetBrains Mono", Consolas, monospace;
   font-size: 0.75rem;
+}
+
+.status-sep {
+  color: #444;
+}
+
+.status-latency {
+  color: var(--accent);
 }
 
 .status-dot {

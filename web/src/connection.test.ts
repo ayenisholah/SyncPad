@@ -27,18 +27,38 @@ function connect() {
   const applied: TextOperation[] = [];
   let init: unknown = null;
   let resynced = false;
+  let language: string | null = null;
   const connection = new Connection(
     "ws://test/ws/doc",
     {
       onInit: (state) => (init = state),
       onApplyOperation: (op) => applied.push(op),
       onResync: () => (resynced = true),
+      onLanguage: (lang) => (language = lang),
     },
     () => socket,
   );
   connection.connect();
   socket.onopen?.(undefined);
-  return { connection, socket, applied, getInit: () => init, wasResynced: () => resynced };
+  return {
+    connection,
+    socket,
+    applied,
+    getInit: () => init,
+    wasResynced: () => resynced,
+    getLanguage: () => language,
+  };
+}
+
+function seedInit(ctx: ReturnType<typeof connect>, revision = 0): void {
+  ctx.socket.deliver({
+    type: "init",
+    revision,
+    content: "",
+    language: "plaintext",
+    participants: [],
+    selfId: "self-1",
+  });
 }
 
 describe("Connection", () => {
@@ -135,5 +155,33 @@ describe("Connection", () => {
       selfId: "self-1",
     });
     expect(ctx.connection.revision).toBe(6);
+  });
+
+  it("sends a setLanguage frame and surfaces language changes", () => {
+    const ctx = connect();
+    seedInit(ctx);
+
+    ctx.connection.sendLanguage("rust");
+    expect(JSON.parse(ctx.socket.sent[0])).toEqual({ type: "setLanguage", language: "rust" });
+
+    ctx.socket.deliver({ type: "language", language: "python" });
+    expect(ctx.getLanguage()).toBe("python");
+  });
+
+  it("samples op→apply latency from sentAt", () => {
+    const ctx = connect();
+    seedInit(ctx);
+    expect(ctx.connection.latencyP50()).toBeNull();
+
+    const now = Date.now();
+    // Three remote ops with known ages → median is the middle age.
+    ctx.socket.deliver({ type: "op", revision: 1, ops: ["x"], authorId: "o", sentAt: now - 10 });
+    ctx.socket.deliver({ type: "op", revision: 2, ops: [1, "y"], authorId: "o", sentAt: now - 30 });
+    ctx.socket.deliver({ type: "op", revision: 3, ops: [2, "z"], authorId: "o", sentAt: now - 20 });
+
+    const p50 = ctx.connection.latencyP50();
+    expect(p50).not.toBeNull();
+    expect(p50!).toBeGreaterThanOrEqual(15);
+    expect(p50!).toBeLessThanOrEqual(30);
   });
 });

@@ -41,6 +41,8 @@ export interface ConnectionHandlers {
   onPresence?(joined: Participant | undefined, left: string | undefined): void;
   /** A peer's caret/selection at the current revision (spec FR5). */
   onCursor?(authorId: string, position: number, selection: Selection | undefined): void;
+  /** The document language changed (spec FR7). */
+  onLanguage?(language: string): void;
   /** The server forced a resync; editor state will be replaced by the next init. */
   onResync?(): void;
   /** Connection lifecycle, for the status bar. */
@@ -65,11 +67,14 @@ interface ServerMessage {
 }
 
 const RECONNECT_DELAY_MS = 1000;
+const LATENCY_SAMPLES = 50;
 
 export class Connection {
   private socket: SocketLike | null = null;
   private client: OtClient | null = null;
   private closedByCaller = false;
+  // Rolling op→apply latencies (ms), measured on received remote ops (spec §6.5).
+  private latencies: number[] = [];
 
   constructor(
     private readonly url: string,
@@ -128,9 +133,21 @@ export class Connection {
     );
   }
 
+  /** Request a document language change (spec FR7). */
+  sendLanguage(language: string): void {
+    this.socket?.send(JSON.stringify({ type: "setLanguage", language }));
+  }
+
   /** The revision the client currently believes it is at. */
   get revision(): number {
     return this.client?.revision ?? 0;
+  }
+
+  /** Median op→apply latency over the rolling window, or null if no samples. */
+  latencyP50(): number | null {
+    if (this.latencies.length === 0) return null;
+    const sorted = [...this.latencies].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
   }
 
   private receive(raw: string): void {
@@ -159,6 +176,12 @@ export class Connection {
       }
       case "op": {
         if (!this.client) break;
+        // Sample op→apply latency: sender's clock to now (spec §6.5).
+        const sentAt = message.sentAt as number | undefined;
+        if (typeof sentAt === "number") {
+          this.latencies.push(Math.max(0, Date.now() - sentAt));
+          if (this.latencies.length > LATENCY_SAMPLES) this.latencies.shift();
+        }
         const op = TextOperation.fromJSON(message.ops as SerializedOperation);
         this.client.applyServer(op);
         break;
@@ -188,7 +211,11 @@ export class Connection {
         );
         break;
       }
-      // language / pong arrive with their features (W2D3-2).
+      case "language": {
+        this.handlers.onLanguage?.(message.language as string);
+        break;
+      }
+      // pong arrives with the skew-correction feature (W2D4-2).
       default:
         break;
     }

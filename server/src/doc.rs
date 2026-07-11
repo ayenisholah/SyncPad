@@ -36,6 +36,30 @@ const PALETTE: &[&str] = &[
     "#a78bfa", "#f59e0b", "#2dd4bf", "#f472b6", "#60a5fa", "#a3e635", "#fb923c", "#e879f9",
 ];
 
+/// Languages a document may be set to (spec FR7, §6.2 — from an allowlist).
+/// Monaco language ids; must match the client picker in `web/src/Editor.tsx`.
+const ALLOWED_LANGUAGES: &[&str] = &[
+    "plaintext",
+    "javascript",
+    "typescript",
+    "python",
+    "rust",
+    "go",
+    "java",
+    "c",
+    "cpp",
+    "csharp",
+    "json",
+    "yaml",
+    "markdown",
+    "html",
+    "css",
+    "sql",
+    "shell",
+    "ruby",
+    "php",
+];
+
 /// The authoritative state of one document, owned by its task.
 #[derive(Debug, Clone)]
 pub struct Doc {
@@ -104,6 +128,9 @@ enum DocCommand {
         position: u64,
         selection: Option<Selection>,
     },
+    SetLanguage {
+        language: String,
+    },
     Snapshot {
         reply: oneshot::Sender<Option<Snapshot>>,
     },
@@ -163,6 +190,12 @@ impl DocHandle {
                 selection,
             })
             .await;
+    }
+
+    /// Request a document language change (spec FR7). Ignored unless the id is
+    /// in the allowlist; on success it is broadcast to everyone and persisted.
+    pub async fn set_language(&self, language: String) {
+        let _ = self.tx.send(DocCommand::SetLanguage { language }).await;
     }
 
     /// Take a snapshot of the document if it has unsaved changes (spec §6.4).
@@ -298,6 +331,19 @@ async fn run(
                             position,
                             selection,
                         },
+                    });
+                }
+            }
+            DocCommand::SetLanguage { language } => {
+                // Only honor allowlisted languages (spec FR7). Broadcast to all
+                // so authors and peers converge under concurrent changes.
+                if ALLOWED_LANGUAGES.contains(&language.as_str()) && doc.language != language {
+                    last_active = Instant::now();
+                    doc.language = language.clone();
+                    dirty = true;
+                    let _ = events.send(Envelope {
+                        recipients: Recipients::All,
+                        msg: ServerMessage::Language { language },
                     });
                 }
             }
@@ -977,6 +1023,51 @@ mod tests {
             }
         }
         assert!(saw_a_cursor, "late joiner should receive A's cursor");
+    }
+
+    #[tokio::test]
+    async fn allowed_language_is_applied_broadcast_and_persisted() {
+        let handle = spawn(Doc::default());
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+
+        handle.set_language("rust".to_string()).await;
+
+        let event = a.events.recv().await.expect("language event");
+        assert_eq!(event.recipients, Recipients::All);
+        assert_eq!(
+            event.msg,
+            ServerMessage::Language {
+                language: "rust".to_string(),
+            }
+        );
+
+        // A late joiner sees the new language, and it survives a snapshot.
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.language, "rust");
+        let snapshot = handle
+            .snapshot()
+            .await
+            .expect("dirty after language change");
+        assert_eq!(snapshot.language, "rust");
+    }
+
+    #[tokio::test]
+    async fn disallowed_language_is_ignored() {
+        let handle = spawn(Doc::default());
+        let mut a = handle.join().await.expect("join a");
+        let _ = a.events.recv().await.expect("own join");
+
+        handle.set_language("brainfuck".to_string()).await;
+
+        // No language broadcast; the document is unchanged and stays clean.
+        assert!(matches!(
+            a.events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        let late = handle.join().await.expect("late join");
+        assert_eq!(late.language, "plaintext");
+        assert!(handle.snapshot().await.is_none());
     }
 
     #[tokio::test]
