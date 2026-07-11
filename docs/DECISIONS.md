@@ -52,3 +52,17 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
   additionally guarded by the project's fuzz harness; the client-side state
   machine mirrors the ot.js semantics in TypeScript and is unit-tested
   transition by transition.
+
+## D-004: Promote futures-util to a runtime dependency
+
+- Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni
+- Context: axum's `WebSocket` is a combined `Stream + Sink`. Forwarding
+  document broadcast events to the socket concurrently with reading client
+  frames requires splitting it into sink and stream halves, which needs the
+  `futures_util::StreamExt::split` combinator. The crate was already a dev
+  dependency and is in the dependency graph through axum itself.
+- Decision: move `futures-util` from `[dev-dependencies]` to
+  `[dependencies]`.
+- Consequences: no new crates enter the dependency tree; the runtime
+  dependency list grows by one entry that axum already pulled in
+  transitively.

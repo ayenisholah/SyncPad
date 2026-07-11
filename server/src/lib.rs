@@ -1,6 +1,7 @@
 //! SyncPad server: axum routes for document creation, the sync WebSocket,
 //! and static serving of the built frontend.
 
+pub mod doc;
 pub mod protocol;
 pub mod registry;
 
@@ -12,10 +13,13 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
+use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::protocol::ServerMessage;
+use crate::doc::Joined;
+use crate::protocol::{ClientMessage, ServerMessage};
 use crate::registry::Registry;
 
 /// Shared application state, cheap to clone per request.
@@ -58,31 +62,102 @@ async fn ws_upgrade(
     ws.on_upgrade(move |socket| handle_socket(socket, doc_id, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, doc_id: String, state: AppState) {
-    let doc = state.registry.get_or_create(&doc_id);
-    let self_id = registry::random_id(16);
+async fn handle_socket(socket: WebSocket, doc_id: String, state: AppState) {
+    let handle = state.registry.handle(&doc_id);
+    let Some(joined) = handle.join().await else {
+        tracing::warn!(doc_id, "document task unavailable; closing connection");
+        return;
+    };
+    let self_id = joined.self_id.clone();
+    tracing::debug!(doc_id, self_id, "connection joined");
+
+    run_connection(socket, joined).await;
+
+    handle.leave(self_id.clone()).await;
+    tracing::debug!(doc_id, self_id, "connection closed");
+}
+
+/// Drive one connection: send `init`, then forward document events to the
+/// socket from a writer task while reading client frames until the peer
+/// goes away (spec §6.6).
+async fn run_connection(socket: WebSocket, joined: Joined) {
+    let Joined {
+        self_id,
+        revision,
+        content,
+        language,
+        participants,
+        mut events,
+    } = joined;
+
+    let (mut sink, mut stream) = socket.split();
 
     let init = ServerMessage::Init {
-        revision: doc.revision,
-        content: doc.content,
-        language: doc.language,
-        participants: Vec::new(),
+        revision,
+        content,
+        language,
+        participants,
         self_id: self_id.clone(),
     };
     let Ok(text) = serde_json::to_string(&init) else {
         return;
     };
-    if socket.send(Message::Text(text.into())).await.is_err() {
+    if sink.send(Message::Text(text.into())).await.is_err() {
         return;
     }
-    tracing::debug!(doc_id, self_id, "connection initialized");
 
-    // The per-document task with op handling, presence, and broadcast is the
-    // next milestone; until then the connection just stays open.
-    while let Some(Ok(message)) = socket.recv().await {
-        if matches!(message, Message::Close(_)) {
-            break;
+    let mut writer = tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(envelope) => {
+                    if envelope.exclude.as_deref() == Some(self_id.as_str()) {
+                        continue;
+                    }
+                    let Ok(text) = serde_json::to_string(&envelope.msg) else {
+                        continue;
+                    };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
+                // A receiver that cannot keep up has missed events; per the
+                // recovery design it must drop state and re-initialize.
+                Err(RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        skipped,
+                        "connection lagged behind broadcasts; forcing resync"
+                    );
+                    if let Ok(text) = serde_json::to_string(&ServerMessage::Resync) {
+                        let _ = sink.send(Message::Text(text.into())).await;
+                    }
+                    break;
+                }
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+
+    loop {
+        tokio::select! {
+            _ = &mut writer => break,
+            frame = stream.next() => match frame {
+                Some(Ok(Message::Text(text))) => {
+                    match serde_json::from_str::<ClientMessage>(text.as_str()) {
+                        // op/cursor/setLanguage/ping handling arrives with
+                        // their features; valid messages are not an error.
+                        Ok(message) => {
+                            tracing::debug!(?message, "client message not handled yet");
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "ignoring malformed client message");
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
         }
     }
-    tracing::debug!(doc_id, self_id, "connection closed");
+
+    writer.abort();
 }
