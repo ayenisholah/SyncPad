@@ -1,0 +1,17 @@
+# build artifacts
+/target/
+node_modules/
+dist/
+coverage/
+
+# runtime document snapshots (spec §6.4) — disposable by policy
+/data/
+
+# env & logs
+.env
+.env.*
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
