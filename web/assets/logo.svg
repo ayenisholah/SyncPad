@@ -1,0 +1,19 @@
+<svg width="360" height="80" viewBox="0 0 360 80" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SyncPad">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="8" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c5cf0"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="96" y1="0" x2="360" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ece9f5"/>
+      <stop offset="1" stop-color="#c7bdf5"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="64" height="64" rx="16" fill="url(#bg)"/>
+  <g stroke="#0d0b14" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M32 27 L23 40 L32 53"/>
+    <path d="M48 27 L57 40 L48 53"/>
+  </g>
+  <rect x="38" y="24" width="4" height="32" rx="2" fill="#ece9f5"/>
+  <text x="96" y="52" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="40" font-weight="700" letter-spacing="-1" fill="url(#ink)">SyncPad</text>
+</svg>

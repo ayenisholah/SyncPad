@@ -1,0 +1,39 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SyncPad — Real-time collaborative code editing">
+  <defs>
+    <linearGradient id="tile" x1="80" y1="150" x2="200" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c5cf0"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#0d0b14" stop-opacity="0"/>
+      <stop offset="1" stop-color="#7c5cf0" stop-opacity="0.10"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0 H0 V48" fill="none" stroke="#a78bfa" stroke-opacity="0.06" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="630" fill="#0d0b14"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <!-- brand mark -->
+  <rect x="80" y="150" width="120" height="120" rx="28" fill="url(#tile)"/>
+  <g stroke="#0d0b14" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M126 182 L104 210 L126 238"/>
+    <path d="M154 182 L176 210 L154 238"/>
+  </g>
+  <rect x="136" y="176" width="8" height="68" rx="4" fill="#ece9f5"/>
+
+  <!-- badge -->
+  <rect x="224" y="176" width="330" height="40" rx="20" fill="#a78bfa" fill-opacity="0.10" stroke="#a78bfa" stroke-opacity="0.28"/>
+  <text x="248" y="202" font-family="'JetBrains Mono', Consolas, monospace" font-size="18" letter-spacing="2" fill="#c7bdf5">RUST · WEBSOCKETS · OT</text>
+
+  <!-- wordmark + tagline -->
+  <text x="80" y="380" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="104" font-weight="800" letter-spacing="-3" fill="#ece9f5">SyncPad</text>
+  <text x="84" y="446" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="40" font-weight="500" fill="#9a91b0">Real-time collaborative code editing —</text>
+  <text x="84" y="498" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="40" font-weight="500" fill="#9a91b0">share a link, edit together, no accounts.</text>
+
+  <text x="80" y="580" font-family="'JetBrains Mono', Consolas, monospace" font-size="26" fill="#7c74a0">syncpad.sholaayeni.xyz</text>
+</svg>

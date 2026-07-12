@@ -1,0 +1,6 @@
+# Documents live behind unguessable links and expire after 24h idle — keep them
+# out of search. The landing page is indexable.
+User-agent: *
+Disallow: /d/
+
+Sitemap: https://syncpad.sholaayeni.xyz/sitemap.xml

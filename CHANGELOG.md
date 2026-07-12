@@ -11,6 +11,15 @@ release.
 
 ### Added
 
+- Site branding and metadata: a SyncPad logo/favicon set, a 1200×630 Open Graph
+  / Twitter card image, a web app manifest, and a full metadata head
+  (description, Open Graph, Twitter `summary_large_image`, and a JSON-LD
+  `SoftwareApplication` block). Documents are kept out of search — `robots.txt`
+  disallows `/d/`, the sitemap lists only the landing page, and doc routes set a
+  runtime `noindex`. Brand rasters are generated from SVG sources by
+  `npm run gen:assets` and committed, so the production build needs no image
+  tooling.
+
 - Deployment (§12): a multi-stage `Dockerfile` builds the frontend and server
   into a small distroless image that serves the SPA, API, and WebSocket from one
   origin, run via `deploy/docker-compose.yml` behind an nginx reverse proxy

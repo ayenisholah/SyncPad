@@ -99,6 +99,43 @@ Statuses: Proposed → Approved / Rejected; later possibly Superseded.
   clone. This refines D-006; the runtime topology (one instance behind nginx) is
   unchanged.
 
+## D-008: Client-side social sharing of code samples
+
+- Date: 2026-07-12 · Status: Approved · Decider: Shola Ayeni
+- Context: users want to share a code sample from a document to social media.
+  A server-rendered per-document preview would expose document content to
+  crawlers, add server-side image rendering, and break when a document expires
+  after 24 h idle — at odds with the unguessable-link privacy model.
+- Decision: sharing is entirely client-side. The editor renders the current
+  selection (or the whole document) into a branded code image the user can
+  download or copy, alongside share-intent links (X, LinkedIn, Reddit) that
+  carry the document URL. No server changes and no per-document Open Graph. The
+  snippet is syntax-highlighted by reusing Monaco's `editor.colorize` (no new
+  highlighter); rasterization uses the `html-to-image` library.
+- Consequences: documents are never crawled and sharing survives expiry (the
+  image is self-contained; the link is just a link). One new runtime dependency
+  (`html-to-image`). The shared image reflects a point-in-time snapshot, not a
+  live view — which is the intent.
+
+## D-009: Site metadata, branding, and SEO assets
+
+- Date: 2026-07-12 · Status: Approved · Decider: Shola Ayeni
+- Context: the deployed site had only a `<title>` — no favicon, social preview,
+  or search metadata. The owner's sibling site sets the house style to match.
+- Decision: add a full metadata head (description, canonical, theme-color,
+  Open Graph + Twitter `summary_large_image`, a favicon/apple-touch/manifest
+  set, and a JSON-LD `SoftwareApplication` block) with SyncPad's own violet
+  theme and logo. Document routes (`/d/:id`) are kept out of search: `robots.txt`
+  disallows `/d/`, `sitemap.xml` lists only the landing page, and doc routes set
+  a runtime `noindex`. Raster assets (favicons, the 1200×630 Open Graph image)
+  are generated from checked-in SVG sources by a dev-only script (`sharp`,
+  `png-to-ico`); the generated files are committed so the production build needs
+  no native image tooling.
+- Consequences: rich link previews and correct favicons without exposing
+  ephemeral documents to search. Two new devDependencies used only for asset
+  regeneration, kept out of the runtime and CI build. SVG remains the source of
+  truth for the brand marks.
+
 ## D-005: Client operation algebra — minimal TypeScript port now
 
 - Date: 2026-07-11 · Status: Approved · Decider: Shola Ayeni
