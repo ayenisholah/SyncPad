@@ -9,6 +9,8 @@ test-results/
 playwright-report/
 /web/playwright/.cache/
 /artifacts/
+/server-capacity-*.zip
+/public-latency-*.zip
 
 # runtime document snapshots (spec §6.4) — disposable by policy
 /data/

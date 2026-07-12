@@ -67,6 +67,7 @@ class Peer {
     return new Promise((resolve) => { this.pendingAck = resolve; });
   }
 
+  get idle(): boolean { return this.pendingAck === null; }
   close(): void { this.socket.close(); }
 }
 
@@ -109,6 +110,11 @@ class Session {
     }
   }
 
+  get settled(): boolean {
+    return this.peers.every((peer) => peer.idle) &&
+      this.peers[0].revision === this.peers[1].revision &&
+      this.peers[0].content === this.peers[1].content;
+  }
   setMetrics(metrics: StepMetrics): void { this.metricsRef.current = metrics; }
   setPaused(paused: boolean): void { this.paused = paused; }
   stop(): void { this.stopped = true; this.peers.forEach((peer) => peer.close()); }
@@ -128,6 +134,14 @@ function websocketUrl(origin: string, docId: string): string {
   return url.toString();
 }
 
+async function waitForSettlement(sessions: Session[], timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!sessions.every((session) => session.settled)) {
+    if (Date.now() >= deadline) throw new Error(`sessions did not settle within ${timeoutMs} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function run(options: StressOptions): Promise<void> {
   const sessions: Session[] = [];
   let previousTarget = 0;
@@ -144,13 +158,13 @@ async function run(options: StressOptions): Promise<void> {
       sessions.push(session);
     }
     previousTarget = target;
-    await new Promise((resolve) => setTimeout(resolve, options.operationIntervalMs + 100));
+    await waitForSettlement(sessions);
     // Exclude ramp setup from the hold-period statistics.
     metrics = { sessions: target, sent: 0, acknowledged: 0, received: 0, errors: 0, disconnects: 0, convergenceFailures: 0, latencies: [] };
     sessions.forEach((session) => { session.setMetrics(metrics); session.setPaused(false); });
     await new Promise((resolve) => setTimeout(resolve, options.holdSeconds * 1000));
     sessions.forEach((session) => session.setPaused(true));
-    await new Promise((resolve) => setTimeout(resolve, options.operationIntervalMs + 100));
+    await waitForSettlement(sessions);
     sessions.forEach((session) => session.verify());
     const summary = summarize(metrics, options.holdSeconds);
     process.stdout.write(`${JSON.stringify(summary)}\n`);

@@ -21,6 +21,11 @@ release.
   with no errors, disconnects, or convergence failures. This is documented as a
   tested lower bound; public-path latency remains unpublished pending its
   separate workflow artifact.
+- Measured the full public HTTPS/WSS path across three valid 60-second runs:
+  median remote-apply latency was p50 349 ms and p95 1,434 ms, with 100%
+  acknowledgements and zero errors, disconnects, or convergence failures. The
+  harness now waits for both replicas to reach the same settled revision before
+  checking convergence on higher-latency links.
 - Share code samples (D-008): a Share panel renders the current selection (or the
   whole document) as a branded, syntax-highlighted image — download it, copy it
   to the clipboard, or post to X, LinkedIn, or Reddit with a link back to the
