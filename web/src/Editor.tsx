@@ -9,6 +9,7 @@ import {
   type Participant,
 } from "./connection";
 import { RemoteCursors } from "./cursors";
+import { ShareModal } from "./ShareModal";
 
 /** Throttle interval for outgoing cursor updates (spec §6.2). */
 const CURSOR_THROTTLE_MS = 50;
@@ -83,6 +84,8 @@ export function Editor({ docId }: { docId: string }) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [revision, setRevision] = useState(0);
   const [latency, setLatency] = useState<number | null>(null);
+  // The snippet captured when the Share panel is opened (selection or whole doc).
+  const [share, setShare] = useState<{ selection: string; whole: string } | null>(null);
 
   const seedContent = useCallback((content: string) => {
     const model = editorRef.current?.getModel();
@@ -259,6 +262,16 @@ export function Editor({ docId }: { docId: string }) {
     });
   };
 
+  const openShare = () => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!model) return;
+    const selection = editor?.getSelection();
+    const selected =
+      selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
+    setShare({ selection: selected, whole: model.getValue() });
+  };
+
   return (
     <div className="editor-shell">
       <header className="editor-topbar">
@@ -269,6 +282,9 @@ export function Editor({ docId }: { docId: string }) {
         <code className="doc-slug">d/{docId}</code>
         <button className="copy-link" onClick={copyLink}>
           {copied ? "copied" : "copy link"}
+        </button>
+        <button className="share-btn" onClick={openShare}>
+          Share
         </button>
         <span className="spacer" />
         <div className="presence" title="People in this document">
@@ -325,6 +341,16 @@ export function Editor({ docId }: { docId: string }) {
         <span className="status-sep">·</span>
         <span className="status-rev">rev {revision}</span>
       </footer>
+      {share && (
+        <ShareModal
+          docUrl={window.location.href}
+          language={language}
+          languageLabel={LANGUAGES.find((l) => l.id === language)?.label ?? language}
+          selection={share.selection}
+          whole={share.whole}
+          onClose={() => setShare(null)}
+        />
+      )}
     </div>
   );
 }

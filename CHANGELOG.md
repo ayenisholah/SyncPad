@@ -11,6 +11,11 @@ release.
 
 ### Added
 
+- Share code samples (D-008): a Share panel renders the current selection (or the
+  whole document) as a branded, syntax-highlighted image — download it, copy it
+  to the clipboard, or post to X, LinkedIn, or Reddit with a link back to the
+  document. Highlighting reuses Monaco's colorizer and rendering is entirely
+  client-side, so documents are never exposed to crawlers.
 - Redesigned interface (spec §8.1): a refreshed dark violet theme with the Inter
   typeface, a subtle grid backdrop, and glassy panels. The landing page leads
   with the logo, a protocol badge, and value points; the editor top and status
