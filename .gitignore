@@ -8,6 +8,7 @@ coverage/
 test-results/
 playwright-report/
 /web/playwright/.cache/
+/artifacts/
 
 # runtime document snapshots (spec §6.4) — disposable by policy
 /data/

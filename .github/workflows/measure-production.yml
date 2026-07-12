@@ -42,6 +42,16 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - name: Record run metadata
+        working-directory: web
+        run: |
+          {
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "commit_sha=${GITHUB_SHA}"
+            echo "measured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "runner=$(uname -a)"
+            echo "node=$(node --version)"
+          } > public-metadata.txt
       - name: Measure public HTTPS/WSS path
         working-directory: web
         run: |
@@ -55,7 +65,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: public-latency-${{ github.run_id }}
-          path: web/public-latency.jsonl
+          path: |
+            web/public-latency.jsonl
+            web/public-metadata.txt
 
   server-capacity:
     runs-on: ubuntu-latest
@@ -86,6 +98,19 @@ jobs:
         run: |
           scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             stress.cjs "$VPS_USER@$VPS_HOST:/tmp/syncpad-stress.cjs"
+      - name: Record production metadata
+        run: |
+          {
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "commit_sha=${GITHUB_SHA}"
+            ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" '
+              echo measured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              echo kernel=$(uname -a)
+              echo cpu_count=$(nproc)
+              free -h
+              docker compose -f /opt/syncpad/deploy/docker-compose.yml images
+            '
+          } > server-capacity-metadata.txt
       - name: Run loopback capacity ramp
         run: |
           ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
@@ -101,4 +126,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: server-capacity-${{ github.run_id }}
-          path: server-capacity.jsonl
+          path: |
+            server-capacity.jsonl
+            server-capacity-metadata.txt
