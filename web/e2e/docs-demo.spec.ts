@@ -38,11 +38,16 @@ test("capture deterministic two-browser convergence demo", async ({ browser }) =
   }
 
   await capture();
-  await Promise.all([a.locator(".monaco-editor").click(), b.locator(".monaco-editor").click()]);
-  await Promise.all([a.keyboard.type("const shared = ", { delay: 35 }), b.keyboard.type("// together\n", { delay: 35 })]);
+  await a.locator(".monaco-editor").click();
+  await a.keyboard.insertText('const projectName: string = "SyncPad";\n\n');
+  await expect.poll(async () => content(b)).toBe(await content(a));
+  await Promise.all([a.keyboard.press("Escape"), b.keyboard.press("Escape")]);
   await capture();
-  await Promise.all([a.keyboard.type("42;", { delay: 45 }), b.keyboard.type("export ", { delay: 45 })]);
-  await expect.poll(async () => [await content(a), await content(b)]).toEqual([await content(a), await content(a)]);
+  await b.locator(".monaco-editor").click();
+  await b.keyboard.press("Control+End");
+  await b.keyboard.insertText('const activeEditors: number = 2;\n\nconsole.log(projectName, "active editors:", activeEditors);\n');
+  await expect.poll(async () => content(a)).toBe(await content(b));
+  await Promise.all([a.keyboard.press("Escape"), b.keyboard.press("Escape")]);
   await capture();
   await writeFile(resolve(output, "demo.png"), frames.at(-1)!);
 

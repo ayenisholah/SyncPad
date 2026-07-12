@@ -7,7 +7,7 @@ Real-time collaborative code editing with Rust, WebSockets, Monaco, and
 operational transforms. [Open the production demo](https://syncpad.sholaayeni.xyz),
 create a document, and share its link—no account required.
 
-![Two SyncPad editors converged after concurrent typing](docs/assets/demo.gif)
+![Two SyncPad editors converged on the same TypeScript example](docs/assets/demo.gif)
 
 ![SyncPad two-browser editor](docs/assets/demo.png)
 
