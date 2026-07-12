@@ -8,6 +8,7 @@ This index is the public map of SyncPad's maintained documentation.
 | Product and protocol requirements | [Engineering specification](syncpad-engineering-doc.md) |
 | Architecture decisions and dependency rationale | [Decision records](DECISIONS.md) |
 | Capacity and public-latency methodology/results | [Measurements](measurements.md) |
+| Recommended fixes, improvements, and release gates | [Future releases](future-releases.md) |
 | Deployment, rollback, and operations | [Deployment guide](../deploy/README.md) |
 | Trust boundaries and vulnerability reporting | [Security policy](../SECURITY.md) |
 | Frontend development | [Web subsystem](../web/README.md) |

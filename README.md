@@ -172,8 +172,10 @@ exposing a deployment.
 
 Start at the [documentation index](docs/README.md). Contributor workflow and
 the complete test matrix are in [CONTRIBUTING.md](CONTRIBUTING.md); deployment
-is in [deploy/README.md](deploy/README.md). The engineering specification and
-ADRs remain authoritative for requirements and design decisions.
+is in [deploy/README.md](deploy/README.md), and recommended follow-up work is in
+the [future release roadmap](docs/future-releases.md). The engineering
+specification and ADRs remain authoritative for requirements and design
+decisions.
 
 ## Contributing
 
