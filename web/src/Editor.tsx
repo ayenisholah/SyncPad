@@ -287,33 +287,37 @@ export function Editor({ docId }: { docId: string }) {
           Share
         </button>
         <span className="spacer" />
-        <div className="presence" title="People in this document">
-          <span className="avatar avatar-you" title="You">
-            you
-          </span>
-          {participants.map((p) => (
-            <span
-              key={p.id}
-              className="avatar"
-              style={{ background: p.color }}
-              title={p.name}
-            >
-              {p.name.slice(0, 1).toUpperCase()}
+        <div className="topbar-right">
+          <div className="presence" title="People in this document">
+            <span className="avatar avatar-you" title="You">
+              you
             </span>
-          ))}
+            {participants.map((p) => (
+              <span
+                key={p.id}
+                className="avatar"
+                style={{ background: p.color }}
+                title={p.name}
+              >
+                {p.name.slice(0, 1).toUpperCase()}
+              </span>
+            ))}
+          </div>
+          <span className="lang-picker">
+            <select
+              className="lang-select"
+              value={language}
+              onChange={(e) => changeLanguage(e.target.value)}
+              aria-label="Language"
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </span>
         </div>
-        <select
-          className="lang-select"
-          value={language}
-          onChange={(e) => changeLanguage(e.target.value)}
-          aria-label="Language"
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.label}
-            </option>
-          ))}
-        </select>
       </header>
       <div className="editor-main">
         <MonacoEditor

@@ -272,45 +272,96 @@ a {
   flex: 1;
 }
 
+/* Right cluster: presence group + language picker, set off by a divider. */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--line);
+}
+
 .presence {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.4rem;
-  height: 1.4rem;
-  padding: 0 0.32rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  font-size: 0.68rem;
   font-weight: 700;
   color: #150e2e;
   cursor: default;
   user-select: none;
-  box-shadow: 0 0 0 2px var(--bg);
+  /* Ring in the bar background so overlapping avatars read as separate. */
+  box-shadow: 0 0 0 2px rgba(13, 11, 20, 0.9);
+}
+
+/* Overlap subsequent avatars for a stacked-presence look. */
+.avatar + .avatar {
+  margin-left: -0.5rem;
 }
 
 .avatar-you {
+  position: relative;
+  z-index: 2;
   background: var(--accent);
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+/* Native <select> under a custom chevron so it matches the theme. */
+.lang-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.lang-picker::after {
+  content: "";
+  position: absolute;
+  right: 0.6rem;
+  width: 10px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--muted);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
 .lang-select {
+  appearance: none;
+  -webkit-appearance: none;
   background: var(--panel-solid);
   color: var(--fg);
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  padding: 0.26rem 0.45rem;
+  border-radius: 8px;
+  padding: 0.34rem 1.7rem 0.34rem 0.6rem;
   font-size: 0.78rem;
   font-family: var(--sans);
   cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .lang-select:hover {
   border-color: var(--accent);
+}
+
+.lang-select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.28);
 }
 
 .editor-main {
