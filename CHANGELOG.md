@@ -11,6 +11,11 @@ release.
 
 ### Added
 
+- A reproducible production-measurement harness and manual GitHub Actions
+  workflow. It measures the public HTTPS/WSS path separately from a VPS-local
+  capacity ramp, reports acknowledgement rate, throughput, p50/p95 latency,
+  disconnects, and convergence failures, and preserves raw JSON results as
+  workflow artifacts without weakening production abuse limits.
 - Share code samples (D-008): a Share panel renders the current selection (or the
   whole document) as a branded, syntax-highlighted image — download it, copy it
   to the clipboard, or post to X, LinkedIn, or Reddit with a link back to the

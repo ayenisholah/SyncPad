@@ -1,0 +1,104 @@
+name: Measure Production
+
+# Manual, read-only load measurement. The public job measures the real TLS/WSS
+# path. The capacity job uses the existing production SSH credentials and runs
+# against loopback so the intentional per-public-IP document cap stays enabled.
+on:
+  workflow_dispatch:
+    inputs:
+      public_hold_seconds:
+        description: "Seconds to measure one public two-client session"
+        required: true
+        default: "60"
+      capacity_start_sessions:
+        description: "Initial capacity-ramp sessions"
+        required: true
+        default: "20"
+      capacity_step_sessions:
+        description: "Sessions added per ramp step"
+        required: true
+        default: "20"
+      capacity_max_sessions:
+        description: "Maximum capacity-ramp sessions"
+        required: true
+        default: "200"
+      capacity_hold_seconds:
+        description: "Seconds to hold each capacity step"
+        required: true
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  public-latency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Measure public HTTPS/WSS path
+        working-directory: web
+        run: |
+          npm run stress -- \
+            --origin https://syncpad.sholaayeni.xyz \
+            --start-sessions 1 \
+            --step-sessions 1 \
+            --max-sessions 1 \
+            --hold-seconds "${{ inputs.public_hold_seconds }}" \
+            --operation-interval-ms 500 | tee public-latency.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-latency-${{ github.run_id }}
+          path: web/public-latency.jsonl
+
+  server-capacity:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Bundle the self-contained harness
+        run: npx --prefix web esbuild scripts/stress.ts --bundle --platform=node --format=cjs --outfile=stress.cjs
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Upload harness
+        run: |
+          scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            stress.cjs "$VPS_USER@$VPS_HOST:/tmp/syncpad-stress.cjs"
+      - name: Run loopback capacity ramp
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            "docker run --rm --network host -v /tmp/syncpad-stress.cjs:/work/stress.cjs:ro node:22-alpine \
+              node /work/stress.cjs \
+              --origin http://127.0.0.1:8090 \
+              --synthetic-ips \
+              --start-sessions '${{ inputs.capacity_start_sessions }}' \
+              --step-sessions '${{ inputs.capacity_step_sessions }}' \
+              --max-sessions '${{ inputs.capacity_max_sessions }}' \
+              --hold-seconds '${{ inputs.capacity_hold_seconds }}' \
+              --operation-interval-ms 500" | tee server-capacity.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-capacity-${{ github.run_id }}
+          path: server-capacity.jsonl

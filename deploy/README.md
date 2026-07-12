@@ -129,6 +129,12 @@ On the VPS, compose lives at `/opt/syncpad/deploy/docker-compose.yml`.
 - **Data:** `/data` (the `syncpad-data` volume) holds per-document JSON
   snapshots. It is disposable by policy — documents expire after 24 h idle — and
   only needs to survive restarts.
+- **Measure latency and capacity:** Actions > **Measure Production** > Run
+  workflow. The public job measures the real HTTPS/WSS path; the capacity job
+  runs the same harness on the VPS loopback interface and uses synthetic source
+  addresses so the intentional 10-documents-per-public-IP limit remains
+  enabled. Download both JSONL artifacts and record reviewed results in
+  `docs/measurements.md`.
 - **Manual deploy (no Actions):** with the package public,
   `SYNCPAD_IMAGE=ghcr.io/ayenisholah/syncpad:edge docker compose -f
   /opt/syncpad/deploy/docker-compose.yml pull && docker compose -f
