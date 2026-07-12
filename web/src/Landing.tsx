@@ -19,9 +19,12 @@ export function Landing() {
 
   return (
     <main className="shell">
+      <span className="badge">RUST · WEBSOCKETS · OT</span>
+      <img className="hero-mark" src="/favicon.svg" alt="" width={88} height={88} />
       <h1 className="wordmark">SyncPad</h1>
       <p className="tagline">
-        Real-time collaborative code editing — no accounts, just a link.
+        Real-time collaborative code editing. Share a link and edit the same
+        document together in your browser — no accounts, no setup.
       </p>
       <button
         className="new-doc"
@@ -30,6 +33,17 @@ export function Landing() {
       >
         {busy ? "Creating…" : "New document"}
       </button>
+      <div className="values">
+        <span className="value">
+          <i className="dot" /> <b>Real-time</b> <span>sub-frame sync</span>
+        </span>
+        <span className="value">
+          <i className="dot" /> <b>Conflict-free</b> <span>operational transforms</span>
+        </span>
+        <span className="value">
+          <i className="dot" /> <b>No accounts</b> <span>the link is the key</span>
+        </span>
+      </div>
       {error ? <p className="error">{error}</p> : null}
       <footer className="footer">
         Rust · WebSockets · Operational Transforms ·{" "}

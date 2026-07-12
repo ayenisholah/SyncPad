@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import MonacoEditor, { type OnMount } from "@monaco-editor/react";
+import MonacoEditor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
 import { TextOperation, diffToOperation, operationToEdits, utf16ToCodePoint } from "./ops";
 import {
@@ -173,6 +173,27 @@ export function Editor({ docId }: { docId: string }) {
     connectionRef.current?.sendLanguage(next);
   };
 
+  // Match the editor surface to the app background (defined before mount so
+  // there's no flash of the stock vs-dark grey).
+  const handleBeforeMount: BeforeMount = (monacoApi) => {
+    monacoApi.editor.defineTheme("syncpad", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [],
+      colors: {
+        "editor.background": "#0d0b14",
+        "editorGutter.background": "#0d0b14",
+        "editor.lineHighlightBackground": "#17131f",
+        "editorLineNumber.foreground": "#4c4568",
+        "editorLineNumber.activeForeground": "#a78bfa",
+        "editor.selectionBackground": "#3a2f66",
+        "editorCursor.foreground": "#a78bfa",
+        "editorWidget.background": "#17131f",
+        "editorWidget.border": "#2a2440",
+      },
+    });
+  };
+
   const handleMount: OnMount = (editor, monacoApi) => {
     editorRef.current = editor;
     const model = editor.getModel();
@@ -241,7 +262,10 @@ export function Editor({ docId }: { docId: string }) {
   return (
     <div className="editor-shell">
       <header className="editor-topbar">
-        <span className="wordmark-sm">SyncPad</span>
+        <span className="brand">
+          <img className="brand-mark" src="/favicon.svg" alt="" width={22} height={22} />
+          <span className="wordmark-sm">SyncPad</span>
+        </span>
         <code className="doc-slug">d/{docId}</code>
         <button className="copy-link" onClick={copyLink}>
           {copied ? "copied" : "copy link"}
@@ -277,9 +301,10 @@ export function Editor({ docId }: { docId: string }) {
       </header>
       <div className="editor-main">
         <MonacoEditor
-          theme="vs-dark"
+          theme="syncpad"
           language={language}
           defaultValue=""
+          beforeMount={handleBeforeMount}
           onMount={handleMount}
           options={{
             fontFamily: '"JetBrains Mono", Consolas, monospace',

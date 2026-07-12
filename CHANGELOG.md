@@ -11,6 +11,10 @@ release.
 
 ### Added
 
+- Redesigned interface (spec §8.1): a refreshed dark violet theme with the Inter
+  typeface, a subtle grid backdrop, and glassy panels. The landing page leads
+  with the logo, a protocol badge, and value points; the editor top and status
+  bars are tidied and the Monaco surface is themed to match the app background.
 - Site branding and metadata: a SyncPad logo/favicon set, a 1200×630 Open Graph
   / Twitter card image, a web app manifest, and a full metadata head
   (description, Open Graph, Twitter `summary_large_image`, and a JSON-LD
