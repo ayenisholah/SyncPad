@@ -1,0 +1,10 @@
+flowchart LR
+  A[Browser A\nReact + Monaco] <-->|HTTPS / WSS| N[nginx\nTLS + WebSocket proxy]
+  B[Browser B\nReact + Monaco] <-->|HTTPS / WSS| N
+  N <-->|loopback :8090| S[Axum server\nHTTP + static files + WS]
+  S --> R[Document registry]
+  R --> D[One Tokio task\nper active document]
+  D --> O[operational-transform crate\ntransform + apply]
+  D --> P[(JSON snapshots\n/data)]
+  Q[Snapshot service\n30 s default] --> P
+  X[Idle reaper\n24 h default] --> R

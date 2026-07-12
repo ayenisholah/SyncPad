@@ -20,7 +20,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "cargo run -p syncpad-server",
+    command: process.env.SYNCPAD_E2E_SERVER_COMMAND ?? "cargo run -p syncpad-server",
     cwd: "..",
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,

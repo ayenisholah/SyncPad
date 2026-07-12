@@ -1,62 +1,71 @@
 # Contributing to SyncPad
 
-Thanks for your interest in SyncPad. The project is in active early
-development, so the surface area changes quickly — opening an issue before a
-large pull request will save you time.
+Sync correctness and honest operational claims come first. Discuss a large or
+scope-changing proposal in an issue before investing in implementation.
 
-## Development setup
+## Setup
 
-Requirements: Rust (stable, with `rustfmt` and `clippy`), Node.js 22+, npm.
+Install stable Rust with `rustfmt` and `clippy`, Node.js 22+, npm, and Git.
 
 ```sh
 git clone https://github.com/ayenisholah/SyncPad.git
 cd SyncPad
+./scripts/setup.sh
 bash scripts/verify.sh
 ```
 
-`scripts/verify.sh` runs the format check, clippy with warnings denied, the
-full server test suite, and the frontend build and tests — it must pass
-before every commit. On Windows you can also use:
+Windows users can run `powershell -ExecutionPolicy Bypass -File
+scripts\setup.ps1` and `scripts\verify.ps1`. Development uses two terminals:
+`cargo run -p syncpad-server` and `cd web && npm run dev`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
+## Branches and commits
+
+Branch from current `main` and use a short descriptive branch name. Do not mix
+unrelated changes. Commit subjects follow Conventional Commits:
+`type(scope)?: summary`, where type is `feat`, `fix`, `docs`, `chore`,
+`refactor`, `test`, `perf`, `ci`, `build`, or `style`; keep the subject within
+72 characters. Add user-visible changes under `CHANGELOG.md` `[Unreleased]`.
+
+## Test matrix
+
+| Layer | Command | Covers |
+|---|---|---|
+| Rust format/lint | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | Style and warnings |
+| Rust unit/integration | `cargo test --workspace` | Protocol, tasks, limits, API/WS, snapshots, reaper |
+| Convergence fuzz | `cargo test -p syncpad-server --test fuzz_convergence` | Random concurrent clients and revisions |
+| Frontend unit | `cd web && npm run test:unit` | OT state, operations, connection, routes, sharing |
+| Frontend build/docs | `cd web && npm run check` | Types, bundle, unit tests, local docs consistency |
+| Browser E2E | `cd web && npm run test:e2e` | Convergence, cursors, language, sharing, UI |
+| Full local gate | `bash scripts/verify.sh` | Repository CI-equivalent checks |
+
+Control longer fuzz runs with `SYNCPAD_FUZZ_SEEDS` and
+`SYNCPAD_FUZZ_ROUNDS`, for example:
+
+```sh
+SYNCPAD_FUZZ_SEEDS=500 SYNCPAD_FUZZ_ROUNDS=400 \
+  cargo test -p syncpad-server --test fuzz_convergence
 ```
 
-## Testing
+A failure prints its seed. Preserve it as a regression test. Never weaken a
+test to make a change pass. E2E requires Chromium (`npx playwright install
+chromium`), port 8090, a Rust toolchain, and network access for Monaco/fonts.
 
-- `cargo test --workspace` runs the server suite; `npm test` in `web/` runs
-  the frontend suite.
-- Synchronization correctness is the project. The convergence fuzz harness
-  (`server/tests/fuzz_convergence.rs`) is the most important test in the
-  repository: changes to operation handling, the revision log, or the client
-  state machine must keep it green and should extend it where behavior
-  changes. CI runs fixed seeds; for longer local runs crank it up with
-  `SYNCPAD_FUZZ_SEEDS=500 SYNCPAD_FUZZ_ROUNDS=400 cargo test -p
-  syncpad-server --test fuzz_convergence`. A failure names its seed — when
-  fixing a bug found this way, keep that seed as a regression case.
-- The OT transform algebra comes from the `operational-transform` crate and
-  is never reimplemented here; tests exercise the protocol around it
-  (ordering, acks, resync, cursor transformation), not the transform math.
-- Never weaken or delete an existing test to get to green.
+## Documentation and design
 
-## Commit conventions
+Run `cd web && npm run docs:check` after Markdown or script changes. Regenerate
+committed media with `npm run docs:assets`; capture creates disposable local
+documents. Do not put production/private content in examples or captures.
 
-- [Conventional Commits](https://www.conventionalcommits.org/) subject lines:
-  `type(scope)?: summary`, type ∈ feat fix docs chore refactor test perf ci
-  build style, ≤ 72 characters.
-- One logical change per commit; CHANGELOG entries go under `[Unreleased]`.
+New runtime or build dependencies need rationale and must be pinned where
+reproducibility matters. Protocol behavior, architecture, scope, and material
+dependency decisions require an ADR-lite entry in
+[docs/DECISIONS.md](docs/DECISIONS.md), proposed before implementation. Keep the
+[engineering specification](docs/syncpad-engineering-doc.md), architecture,
+measurements, and operational guide authoritative in their domains.
 
-## Proposing significant changes
+## Pull requests
 
-Design-level changes (new dependencies, protocol behavior, architecture)
-are recorded as ADR-lite entries in [docs/DECISIONS.md](docs/DECISIONS.md).
-Open an issue or a PR adding an entry with Status `Proposed` and the
-context/decision/consequences filled in; implementation starts once it is
-`Approved`.
-
-## Scope
-
-SyncPad intentionally excludes accounts/auth/permissions, a database, a
-document history UI, rich text, and mobile layout polish (see the
-[engineering spec](docs/syncpad-engineering-doc.md)). PRs adding these will
-be declined; feel free to discuss in an issue first.
+Explain the problem and approach, link issues/ADRs, enumerate tests run, attach
+UI evidence when relevant, and call out migration, deployment, security, or
+rollback effects. Keep CI green. PRs must not claim unmeasured performance or
+add excluded scope without an approved design change.

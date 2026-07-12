@@ -177,7 +177,13 @@ async function run(options: StressOptions): Promise<void> {
   sessions.forEach((session) => session.stop());
 }
 
-run(parseArgs(process.argv.slice(2))).catch((error: unknown) => {
+const args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  process.stdout.write(`Usage: npm run measure -- [options]\n\nOptions:\n  --origin URL                 HTTP(S) origin (default http://127.0.0.1:8090)\n  --start-sessions N           Initial two-client session count\n  --step-sessions N            Sessions added per step\n  --max-sessions N             Maximum session count\n  --hold-seconds N             Measurement duration per step\n  --operation-interval-ms N     Delay between operations per session\n  --synthetic-ips              Loopback-only distinct source-IP headers\n  -h, --help                   Show this help\n`);
+  process.exit(0);
+}
+
+run(parseArgs(args)).catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

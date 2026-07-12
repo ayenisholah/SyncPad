@@ -16,6 +16,26 @@ Delivery is two GitHub Actions workflows:
   ships the `deploy/` bundle, and runs `docker compose pull` + `up -d`. Nothing
   deploys automatically on push.
 
+The repository also has **CI** (`ci.yml`) on pushes to `main` and pull
+requests—Rust formatting/clippy/tests, frontend build/unit/docs checks, and
+Playwright—and manual **Measure Production** (`measure-production.yml`) jobs
+for public-path latency and VPS-loopback capacity artifacts.
+
+## Build an image from source
+
+From the repository root:
+
+```sh
+docker build -t syncpad:local .
+docker run --rm -p 8090:8090 -v syncpad-data:/data \
+  -e PORT=8090 -e SYNCPAD_DATA_DIR=/data -e SYNCPAD_STATIC_DIR=/app/web/dist \
+  syncpad:local
+curl -fsS -X POST http://127.0.0.1:8090/api/docs
+```
+
+The image serves the SPA, API, and WebSocket from one origin. `/data` must be
+writable. Run exactly one app instance; replicas do not coordinate OT state.
+
 ## Prerequisites (once, on the Ubuntu VPS)
 
 ```sh
@@ -139,3 +159,39 @@ On the VPS, compose lives at `/opt/syncpad/deploy/docker-compose.yml`.
   `SYNCPAD_IMAGE=ghcr.io/ayenisholah/syncpad:edge docker compose -f
   /opt/syncpad/deploy/docker-compose.yml pull && docker compose -f
   /opt/syncpad/deploy/docker-compose.yml up -d`.
+
+### Smoke checks and rollback
+
+After every rollout, confirm `docker compose ps`, create a disposable document
+with `curl -fsS -X POST http://127.0.0.1:8090/api/docs`, load the public HTTPS
+site, and edit one link from two browsers. The workflow automates the API check.
+Rollback by rerunning **Deploy Production** with a previously published immutable
+`sha-*` or version tag; verify the same checks. `edge` moves and is unsuitable
+as a rollback reference.
+
+### Data inspection and recovery
+
+Locate the volume with `docker volume inspect syncpad_syncpad-data` (the exact
+Compose prefix may differ) and inspect it read-only from a temporary container,
+for example `docker run --rm -v syncpad_syncpad-data:/data:ro alpine ls -la
+/data`. Snapshot JSON contains document content: restrict host access and never
+paste it into tickets or logs.
+
+The volume provides restart continuity, not disaster-recovery guarantees.
+Back it up only if your deployment policy requires retaining ephemeral
+documents; restore it to `/data` while the app is stopped, preserve ownership
+and permissions, then start and smoke-test. A corrupt snapshot may prevent that
+document from hydrating; preserve it for investigation and remove it only after
+accepting data loss. There is no database, point-in-time recovery, or replica.
+
+### Troubleshooting
+
+- `502` or failed WebSockets: check container health/logs, port 8090 loopback,
+  nginx `Upgrade`/`Connection` headers, and `nginx -t`.
+- Pull denied: make the GHCR package public or authenticate Docker to GHCR.
+- Deploy SSH failure: verify all four environment secrets and the pinned host
+  key; do not disable strict host checking.
+- Documents disappear: inspect TTL/reaper configuration, volume attachment,
+  permissions, and shutdown logs.
+- Shutdown exceeds ten seconds: inspect I/O and snapshot count before raising
+  the Compose grace period; do not use `kill -9` for routine operation.

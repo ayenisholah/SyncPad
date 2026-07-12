@@ -1,162 +1,185 @@
 # SyncPad
 
-Real-time collaborative code editor — Rust, WebSockets, and operational
-transforms.
+[![CI](https://github.com/ayenisholah/SyncPad/actions/workflows/ci.yml/badge.svg)](https://github.com/ayenisholah/SyncPad/actions/workflows/ci.yml)
+[![Container Image](https://github.com/ayenisholah/SyncPad/actions/workflows/container-image.yml/badge.svg)](https://github.com/ayenisholah/SyncPad/actions/workflows/container-image.yml)
 
-SyncPad is a Google-Docs-style editor for code: anyone with the link edits the
-same document simultaneously in Monaco, a Rust server merges concurrent edits
-with operational transforms (OT) so no keystrokes are lost, and there is no
-database — documents live in memory with periodic snapshots to disk.
+Real-time collaborative code editing with Rust, WebSockets, Monaco, and
+operational transforms. [Open the production demo](https://syncpad.sholaayeni.xyz),
+create a document, and share its link—no account required.
+
+![Two SyncPad editors converged after concurrent typing](docs/assets/demo.gif)
+
+![SyncPad two-browser editor](docs/assets/demo.png)
 
 ## Status
 
-Pre-alpha. The sync core is in place and fuzz-verified: each live document
-is owned by one tokio task, concurrent operations are transformed against
-the revision log (via the `operational-transform` crate) and broadcast to
-peers with acks and a resync recovery path, and a seeded fuzz harness
-drives simulated clients through randomized concurrent editing to assert
-byte-identical convergence on every run. Presence (server-assigned names
-and colors, join/leave events, roster in `init`) tracks who is editing.
-Next up: snapshots and document lifecycle, then the editor frontend.
+SyncPad is a deployed **production demo / pre-1.0 project**. Its synchronization,
+persistence, test, image, deployment, and measurement paths are implemented and
+operational. The open, ephemeral design is intentional; it is not a claim of
+durable storage, private access, or general production readiness.
 
-| Area | Status |
+| Capability | Current behavior |
 |---|---|
-| Document creation (`POST /api/docs`, slug URLs) | Done |
-| WebSocket connect with `init` document state | Done |
-| Wire-protocol message types (tested codecs) | Done |
-| Frontend shell (landing page, editor route) | Done |
-| Per-document task: presence, broadcast | Done |
-| Server-side OT against the revision log | Done |
-| Convergence fuzz harness | Done |
-| Snapshots + idle expiry (no database) | Planned |
-| Monaco editor + client OT state machine | Planned |
-| Live cursors, selections, presence list | Planned |
-| Language picker | Planned |
-| Latency instrumentation (status-bar p50) | Planned |
-| Deployment (Docker, single instance) | In progress |
+| Collaborative editing | Server-authoritative OT; one in-flight client op plus buffer |
+| Presence and cursors | Server-assigned identity, live roster, transformed cursors/selections |
+| Language | Shared allowlisted Monaco language selection |
+| Sharing | Link copy and share/export panel |
+| Persistence | Atomic JSON snapshots; 30 s default; lazy restart hydration |
+| Lifecycle | Documents expire after 24 h idle by default |
+| Limits | 64 KiB messages, 100 ops/s/connection, 10 live docs/IP |
+| Deployment | Single container and single application instance behind nginx/TLS |
+| Measurements | ≥200 sessions / 400 clients / 400 acknowledged ops/s; public p50 349 ms, p95 1,434 ms |
 
-No performance numbers are claimed until they are measured and committed with
-the measurement methodology.
+## Quick start
 
-## Why
+Requirements: stable Rust with `rustfmt`/`clippy`, Node.js 22+, npm, and Bash
+(or PowerShell on Windows).
 
-Concurrent editing is a consistency problem. When two people type at the same
-position at the same instant, a naive "last write wins" server silently
-destroys one of the edits. The two established solutions are **operational
-transforms** — a central server transforms concurrent operations against each
-other so they compose — and **CRDTs** — merge-anywhere data structures that
-need no central authority.
+```sh
+git clone https://github.com/ayenisholah/SyncPad.git
+cd SyncPad
+./scripts/setup.sh
+cargo run -p syncpad-server
+```
 
-SyncPad deliberately takes the OT-with-central-server approach. A server is
-already in the topology (it serves the app and brokers WebSockets), OT keeps
-per-document memory small, and the resulting architecture is easy to reason
-about: one authoritative document per room, a revision log, server-side
-transformation of concurrent operations, and broadcast to every connected
-editor. CRDTs shine when there is no authoritative node or when offline-first
-merging matters; that is not this product.
+In another terminal:
 
-The transform algebra itself comes from the
-[`operational-transform`](https://crates.io/crates/operational-transform)
-crate rather than a hand-rolled implementation — convergence correctness
-belongs in a tested library. What SyncPad owns is the protocol around it:
-revision ordering, the client state machine, cursor transformation, presence,
-and recovery.
+```sh
+cd web
+npm run dev
+```
 
-## Design
+Vite proxies `/api` and `/ws` to the Rust server on port 8090. Open the URL it
+prints. Windows setup is `powershell -ExecutionPolicy Bypass -File
+scripts\setup.ps1`.
 
-- **One tokio task per document.** All mutation of a document is
-  single-threaded inside its task — no locks around OT state. Connections
-  talk to the task over channels; broadcasts fan out to subscribers.
-- **No database, by design.** Documents live in memory. Dirty documents are
-  snapshotted to per-document JSON files every 30 seconds and on graceful
-  shutdown, and lazily reloaded on first access after a restart. Documents
-  idle for more than 24 hours expire.
-- **The link is the capability.** There are no accounts: an unguessable
-  8-character slug (32-character alphabet, ~10^12 possibilities) is the only
-  access control, with no enumeration endpoint and per-connection rate and
-  size limits.
-
-See [docs/syncpad-engineering-doc.md](docs/syncpad-engineering-doc.md) for the
-full architecture, protocol, and requirements.
-
-## Development
-
-Requirements:
-
-- Rust (stable) with `rustfmt` and `clippy`
-- Node.js 22+ and npm
-- Bash or Git Bash if you want to run `scripts/verify.sh`
-
-Run the project verification loop (format check, clippy with warnings denied,
-server tests, frontend build and tests):
+Run the full local gate:
 
 ```sh
 bash scripts/verify.sh
+# Windows: powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 ```
 
-On Windows, the PowerShell variant may need an execution policy bypass:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
-```
-
-Run the server and frontend during development:
+Focused checks:
 
 ```sh
-cargo run -p syncpad-server        # server on http://127.0.0.1:8090
-cd web && npm run dev              # Vite dev server proxying /api and /ws
+cargo test --workspace
+SYNCPAD_FUZZ_SEEDS=500 SYNCPAD_FUZZ_ROUNDS=400 cargo test -p syncpad-server --test fuzz_convergence
+cd web && npm run test:unit
+npx playwright install chromium && npm run test:e2e
+npm run docs:check
 ```
 
-## Deployment
+## Production container
 
-SyncPad ships as a single container behind a reverse proxy — in-memory documents
-pin a document to one process, so it runs as one instance by design. A
-multi-stage `Dockerfile` builds the frontend and the server into a small
-distroless image that serves the SPA, the API, and the WebSocket from one
-origin.
+Build locally, then mount `/data` and publish port 8090:
 
 ```sh
-docker compose -f deploy/docker-compose.yml up -d --build
+docker build -t syncpad:local .
+docker run --rm -p 8090:8090 -v syncpad-data:/data \
+  -e PORT=8090 -e SYNCPAD_DATA_DIR=/data -e SYNCPAD_STATIC_DIR=/app/web/dist \
+  syncpad:local
 ```
 
-The container listens on `127.0.0.1:8090` with a volume for `/data` (the
-snapshots); an nginx server block fronts it. A graceful stop (SIGTERM) flushes
-dirty documents before exit. GitHub Actions builds the image and publishes it to
-the GitHub Container Registry; a separate one-click **Deploy Production**
-workflow ships it to the host over SSH (`docker compose pull`) using a
-`production` environment's secrets. See [deploy/README.md](deploy/README.md) for
-the full VPS setup, including key generation, the environment secrets, the nginx
-config, and TLS.
+The published image can be deployed with Compose:
 
-## Roadmap
+```sh
+SYNCPAD_IMAGE=ghcr.io/ayenisholah/syncpad:edge \
+  docker compose -f deploy/docker-compose.yml up -d
+```
 
-Ordered so that sync correctness is proven before any editor UI exists:
+See the [deployment and operations guide](deploy/README.md) for TLS, secrets,
+smoke tests, logs, rollback, recovery, and GHCR workflow details.
 
-1. Snapshots, idle expiry, per-connection limits.
-2. Monaco editor and the client OT state machine; two browsers typing.
-3. Live cursors and selections, presence bar, language picker, latency
-   readout.
-4. Deployment, then measured latency and concurrency numbers.
+## Architecture
 
-## Scope
+```mermaid
+flowchart LR
+  A[Browser A] <-->|HTTPS/WSS| N[nginx]
+  B[Browser B] <-->|HTTPS/WSS| N
+  N <-->|:8090| S[Axum server]
+  S --> R[Document registry]
+  R --> D[One Tokio task per document]
+  D --> O[operational-transform crate]
+  D --> P[(JSON snapshots /data)]
+```
 
-SyncPad deliberately does not include accounts, authentication, or
-permissions (anyone with the link edits — that is the product), a database
-(in-memory documents with snapshot files are the persistence story), a
-document history UI, rich text, or mobile layout polish. These are documented
-as future work in the engineering spec so the core synchronization story
-stays focused.
+[View the rendered architecture](docs/architecture.png) or read the full
+[architecture guide](docs/architecture.md).
 
-## Repository Map
+Each local edit becomes an operation. The client permits one operation in
+flight and buffers later edits. The document task transforms the operation
+against revisions it has not seen, applies it, then sends an ack to the author
+and the transformed operation to peers. Remote operations are transformed
+against pending local work and applied under an echo guard. Invalid or lagged
+state triggers a fresh `init` resync.
+
+SyncPad chooses centralized OT because a central server already owns each room,
+the revision order is explicit, and document state stays compact. A CRDT is a
+better fit for offline-first or peer-to-peer merging, which SyncPad does not
+offer. Transform and apply algebra comes from the tested
+[`operational-transform`](https://crates.io/crates/operational-transform) crate;
+SyncPad implements the surrounding protocol, state machine, cursor mapping, and
+recovery rather than hand-rolling the algebra.
+
+## Measured results
+
+The measured lower bound on the production VPS is **200 simultaneous sessions,
+400 WebSocket clients, and 400 acknowledged operations/s**, with no convergence
+failures in the recorded ramp. Three public HTTPS/WSS runs produced median
+remote-apply latency of **p50 349 ms and p95 1,434 ms**, missing the original
+latency target. These are observations from one environment, not a capacity
+ceiling or SLA. Read the full [methodology and artifacts](docs/measurements.md).
+
+To inspect harness options or run an authorized local measurement:
+
+```sh
+cd web
+npm run measure -- --help
+npm run measure -- --origin http://127.0.0.1:8090 --start-sessions 1 \
+  --step-sessions 1 --max-sessions 1 --hold-seconds 10
+```
+
+Production runs use the manual **Measure Production** workflow and preserve
+public-path and VPS-loopback artifacts.
+
+## Security model and limitations
+
+The document slug is a bearer capability: anyone with the link can read and
+edit. There is no authentication, authorization, document enumeration API,
+encryption at rest, database, version history, collaborative undo, or
+offline-first merge. Snapshots can lose up to one interval on abrupt failure
+and expire with idle documents. The UI is desktop-oriented and Monaco/fonts
+currently depend on external network resources.
+
+The server trusts proxy forwarding headers because the supported deployment
+binds it to host loopback behind nginx. Operate exactly one app instance;
+horizontal scaling is unsupported. Review [SECURITY.md](SECURITY.md) before
+exposing a deployment.
+
+## Repository map
 
 | Path | Purpose |
 |---|---|
-| `server/` | Rust server (axum): HTTP, WebSockets, document registry |
-| `web/` | Vite + React + TypeScript frontend |
-| `docs/syncpad-engineering-doc.md` | Engineering spec |
-| `docs/DECISIONS.md` | Architecture decision records |
-| `scripts/verify.*` | Local build, lint, and test entrypoints |
+| `server/` | Rust HTTP/WebSocket server, document tasks, snapshots, tests |
+| `web/` | React/Monaco frontend, client OT, Playwright, docs tooling |
+| `docs/` | Architecture, specification, ADRs, and measurements |
+| `deploy/` | Compose/nginx production bundle and operations guide |
+| `.github/workflows/` | CI, image publishing, deployment, measurement |
+| `scripts/` | Setup, verification, and load harness entry points |
+
+## Documentation
+
+Start at the [documentation index](docs/README.md). Contributor workflow and
+the complete test matrix are in [CONTRIBUTING.md](CONTRIBUTING.md); deployment
+is in [deploy/README.md](deploy/README.md). The engineering specification and
+ADRs remain authoritative for requirements and design decisions.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Significant
+protocol, dependency, or architecture changes require a proposed ADR.
 
 ## License
 
-[MIT](LICENSE) (c) 2026 Shola Ayeni
+[MIT](LICENSE) © 2026 Shola Ayeni

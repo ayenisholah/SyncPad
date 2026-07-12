@@ -11,6 +11,10 @@ release.
 
 ### Added
 
+- Production-accurate project, subsystem, contributor, and operator
+  documentation; reproducible Mermaid and Playwright demo media; a network-free
+  documentation consistency check in CI; and normalized frontend scripts.
+
 - A reproducible production-measurement harness and manual GitHub Actions
   workflow. It measures the public HTTPS/WSS path separately from a VPS-local
   capacity ramp, reports acknowledgement rate, throughput, p50/p95 latency,

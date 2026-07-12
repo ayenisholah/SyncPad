@@ -1,16 +1,33 @@
 {
   "name": "syncpad-web",
+  "description": "SyncPad collaborative code editor frontend and documentation tooling",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayenisholah/SyncPad.git",
+    "directory": "web"
+  },
+  "engines": { "node": ">=22" },
+  "packageManager": "npm@10.9.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run",
-    "e2e": "npm run build && playwright test",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "e2e": "npm run test:e2e",
+    "test:e2e": "npm run build && playwright test",
     "stress": "esbuild ../scripts/stress.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/syncpad-stress.cjs && node node_modules/.cache/syncpad-stress.cjs",
-    "gen:assets": "node scripts/gen-assets.mjs"
+    "measure": "npm run stress --",
+    "gen:assets": "node scripts/gen-assets.mjs",
+    "docs:architecture": "node scripts/render-architecture.mjs",
+    "docs:demo": "playwright test e2e/docs-demo.spec.ts --project=chromium",
+    "docs:assets": "npm run docs:architecture && npm run docs:demo",
+    "docs:check": "node scripts/check-docs.mjs",
+    "check": "npm run build && npm run test:unit && npm run docs:check"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -20,10 +37,12 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@mermaid-js/mermaid-cli": "11.12.0",
     "@playwright/test": "^1.61.1",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.0",
+    "gifenc": "1.0.3",
     "png-to-ico": "^3.0.2",
     "sharp": "^0.35.3",
     "typescript": "^5.8.0",
